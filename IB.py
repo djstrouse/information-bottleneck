@@ -274,10 +274,7 @@ def IB_single(pxy,beta,alpha,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,compa
     Note: fixed distributions denoted by p; optimized ones by q.
     
     INPUTS
-    pxy = p(x,y) [=] X x Y
-    compact = integer indicating how much data to save [=] 0/1/2
-    verbose = integer indicating verbosity of updates [=] 0/1/2
-    **see IB function documentation below for other parameters**
+    *** see IB function documentation below ***
     
     OUTPUTS
     metrics_stepwise = dataframe of scalar metrics for each fit step:

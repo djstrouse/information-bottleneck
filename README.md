@@ -25,9 +25,9 @@ In the simplest case, one might wish to run just one version of the generalized 
 See documentation within each file for more details.
 
 TODOS
-# add normalization check to entropy and KL
-# set max number of steps/time for single beta?
-# make work with sparse data
-# improve parallelization
-# make IB init that perfectly interpolates between wavy and uni?
+- add normalization check to entropy and KL
+- set max number of steps/time for single beta?
+- make work with sparse data
+- improve parallelization
+- make IB init that perfectly interpolates between wavy and uni?
 # add functionality to submit initial beta guesses to IB function
