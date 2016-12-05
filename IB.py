@@ -275,20 +275,9 @@ def IB_single(pxy,beta,alpha,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,compa
     
     INPUTS
     pxy = p(x,y) [=] X x Y
-    beta = tradeoff param between compression/relevance [=] pos scalar
-    alpha = tradeoff param between DIB and IB [=] non-neg scalar
-    Tmax = max alphabet size for compressed representation, aka max number of
-            clusters; is set to min(X,Tmax)
-    p0 = determines initialization if alpha>0 (i.e. non-DIB); see README [=] scalar in -1 to +1
-    ctol_abs = absolute convergence tolerance [=] non-neg scalar
-    ctol_rel = relative convergence tolerance [=] non-neg scalar
-    ptol = error tolerance for probabilities; distributions considered
-        normalized within ptol of 1, and clusters considered unused within
-        ptol of 0 [=] pos scalar
-    zeroLtol = if algorithm converges with L>zeroLtol, revert to trivial L=0
-        solution with all x assigned to single cluster [=] non-neg scalar
     compact = integer indicating how much data to save [=] 0/1/2
     verbose = integer indicating verbosity of updates [=] 0/1/2
+    **see IB function documentation below for other parameters**
     
     OUTPUTS
     metrics_stepwise = dataframe of scalar metrics for each fit step:
@@ -795,7 +784,27 @@ def IB(pxy,fit_param,compact=1,verbose=2):
     
     REQUIRED INPUTS
     pxy - p(x,y) [=] X x Y
-    fit_param = pandas df, with each row specifying a single IB fit; see README for details
+    fit_param = pandas df, with each row specifying a single IB fit; columns inc:
+        alpha = IB parameter [=] pos scalar (required)
+        Tmax = max cardinality of T / max # of clusters [=] pos integer
+        p0 = determines initialization of q(t|x) when alpha>0 (i.e. non-DIB fits)
+            for pos p0, p0 is prob mass on ~unique cluster for each input x
+                (i.e. q(t_i|x_i)=p0 where t_i is unique for each x_i)
+            for neg p0, p0 is prob mass on shared cluster for all inputs
+                (i.e. q(t*_x_i)=p0 for all x_i)
+            in both cases, the probability over the remaining clusters is set
+                to a normalized uniform random vector (with prob mass 1-p0)
+            for p0=0, q(t|x_i) is set to a normalized unirand vec for each x_i
+        ctol_abs = if abs(L_old-L)<ctol_abs, converge [=] non-neg scalar
+        ctol_rel = if abs(L_old-L)/abs(L_old)<ctol_rel, converge [=] non-neg scalar
+        ptol = x,y,t values dropped if prob<ptol [=] non-neg scalar
+        max_fits = max number of beta fits allowed for each input row [=] pos integer
+        max_time = max time (in seconds) allowed for fitting of each input row [=] pos scalar
+        repeats = repeated fits per beta / row, after which best value of L retained [=] pos int
+        zeroLtol = if L>zeroLtol, revert to solution mapping all x to same t (with L=0) [=] non-neg scalar
+        clamp = if true, for all non-DIB fits, insert a clamped version of the solution
+            into the results after convergence [=] boolean
+        *** default parameter values below ***
             
     OPTIONAL INPUTS
     verbose = integer indicating verbosity of updates [=] 0/1/2

@@ -30,3 +30,4 @@ TODOS
 # make work with sparse data
 # improve parallelization
 # make IB init that perfectly interpolates between wavy and uni?
+# add functionality to submit initial beta guesses to IB function
