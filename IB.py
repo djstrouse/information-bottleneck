@@ -5,13 +5,6 @@ import math
 vlog = np.vectorize(math.log)
 vexp = np.vectorize(math.exp)
 
-# TODOS
-# add normalization check to entropy and KL
-# set max number of steps/time for single beta?
-# make work with sparse data
-# improve parallelization
-# make IB init that perfectly interpolates between wavy and uni
-
 # A word on notation: for probability variables, an underscore here means a
 # conditioning, so read _ as |.
 
