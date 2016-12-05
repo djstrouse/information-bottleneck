@@ -6,7 +6,7 @@ This small library implements the generalized information bottleneck (Strouse, S
 
 The generalized IB operates on an input distribution p(X,Y) and clusters/compresses X into T such that T has/retains maximal information about Y. Its output is a cluster mapping / compressive encoder q(t|x). The cost function the generalized IB minimizes is:
 
-L[q(t|x)] = H(T)-alpha*H(T|X)-beta*I(T;Y)
+$ L[q(t|x)] = H(T)-alpha \cdot H(T|X)-beta \ cdot I(T;Y) $ 
 
 alpha=0 is the DIB case, alpha=1 is the IB case, and intermediate values interpolate between the two. beta is a tradeoff parameter between compression and informativeness. For more, see the aforementioned papers.
 
