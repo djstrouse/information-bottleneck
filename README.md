@@ -1,4 +1,4 @@
-WARNING: this code is very much a work in progress, and has thus far been primarily used by a single author, so bugs may well exist and certainly documentation will be lacking. Comments / suggestions / questions more than welcome: danieljstrouse@gmail.com.
+WARNING: this code is very much a work in progress, and has thus far been primarily used by a single author, so bugs may well exist and certainly documentation will be lacking. Comments / suggestions / questions more than welcome.
 
 BACKGROUND
 
