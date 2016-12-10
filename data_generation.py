@@ -265,11 +265,14 @@ def gen_geometric_pxy():
     sig2 = 1
     mu3 = np.array([0,10])
     sig3 = 1
-    samp_per_comp = 30   
+    samp_per_comp = 30
+    groups = np.array([0]*samp_per_comp+
+                        [1]*samp_per_comp+
+                        [2]*samp_per_comp)
     nbins_y1 = 50 # number of bins in 1st dimension
     nbins_y2 = 50
     s = 1 # spatial scale of gaussian smoothing
-    pad = 2 # max distance from data points for bins
+    pad = 2*s # max distance from data points for bins
     
     # generate coordinates of data points
     X = int(3*samp_per_comp)
@@ -327,4 +330,4 @@ def gen_geometric_pxy():
     pxy2, px2, py_x2, hx, hy, hy_x, ixy, X2, Y2, zx, zy = process_pxy(pxy,0)
     print("I(X;Y) = %.3f" % ixy)
         
-    return pxy, Xdata
+    return pxy, Xdata, groups

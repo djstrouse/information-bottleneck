@@ -783,6 +783,9 @@ def IB(pxy,fit_param,compact=1,verbose=2):
     pxy - p(x,y) [=] X x Y
     fit_param = pandas df, with each row specifying a single IB fit; columns inc:
         alpha = IB parameter [=] pos scalar (required)
+        beta = vector of IB parameters [=] vector of pos scalars
+        beta_search = flag indicating whether to perform automatic beta search
+            or use only initial beta(s) [=] boolean
         Tmax = max cardinality of T / max # of clusters [=] pos integer
         p0 = determines initialization of q(t|x) when alpha>0 (i.e. non-DIB fits)
             for pos p0, p0 is prob mass on ~unique cluster for each input x
@@ -811,10 +814,8 @@ def IB(pxy,fit_param,compact=1,verbose=2):
              2: also save stepwise distributions)"""
     
     # set defaults
-    low = np.array([.1])
-    mid = np.array([1,2,3,4,5,7,9])
-    high = np.array([10])
-    def_betas = np.concatenate((low,mid,high))
+    def_betas = np.array([.1,1,2,3,4,5,7,9,10])
+    def_beta_search = True
     def_Tmax = math.inf
     def_p0 = .75
     def_ctol_abs = 10**-3
@@ -885,6 +886,8 @@ def IB(pxy,fit_param,compact=1,verbose=2):
         # extract required parameters
         this_fit = fit_param.iloc[irow]
         this_alpha = this_fit['alpha']
+        this_betas = set_param(this_fit,'betas',def_betas)
+        this_beta_search = set_param(this_fit,'beta_search',def_beta_search)
         # extract optional parameters            
         this_Tmax = set_param(this_fit,'Tmax',def_Tmax)
         if this_alpha>0:
@@ -900,7 +903,7 @@ def IB(pxy,fit_param,compact=1,verbose=2):
         this_zeroLtol = set_param(this_fit,'zeroLtol',def_zeroLtol)
         this_clamp = set_param(this_fit,'clamp',def_clamp)
         # make pre-fitting initializations
-        betas = def_betas # stack of betas
+        betas = this_betas # stack of betas
         fit_count = 0
         fit_time = 0
         fit_start_time = time.time()
@@ -1045,7 +1048,7 @@ def IB(pxy,fit_param,compact=1,verbose=2):
             fit_time = time.time()-fit_start_time
             
             # refine beta if needed
-            if betas.size==0:
+            if betas.size==0 and this_beta_search:
                 betas = refine_beta(these_betas_metrics_converged,verbose)
                 
         if verbose>0:

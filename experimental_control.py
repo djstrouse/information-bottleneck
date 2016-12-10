@@ -1,11 +1,11 @@
 from IB import *
 from data_generation import *
+import os
 
 def test_IB(pxy,compact=1):   
   
     # set up fit param
     fit_param = pd.DataFrame(data={'alpha': [0.,1.]})
-    #fit_param['Tmax'] = 256
     
     # do IB
     if compact>1:
@@ -24,6 +24,43 @@ def test_IB(pxy,compact=1):
            metrics_stepwise_allreps,\
            metrics_converged_allreps, distributions_converged_allreps  = IB(pxy,fit_param,compact)
         #metrics_converged, distributions_converged = clamp_IB(metrics_converged,distributions_converged,pxy)
+        return metrics_stepwise,\
+               metrics_converged, distributions_converged,\
+               metrics_stepwise_allreps,\
+               metrics_converged_allreps, distributions_converged_allreps
+    else:
+        metrics_stepwise,\
+           metrics_converged,\
+           metrics_stepwise_allreps,\
+           metrics_converged_allreps  = IB(pxy,fit_param,compact)
+        return metrics_stepwise,\
+               metrics_converged,\
+               metrics_stepwise_allreps,\
+               metrics_converged_allreps
+               
+def best_beta(pxy,compact=1):   
+    """just uses beta=H(X)/I(X,Y) as attempt to hit knee of IB curve"""
+    # set up fit param
+    pxy, px, py_x, hx, hy, hy_x, ixy, X, Y, zx, zy = process_pxy(pxy)
+    fit_param = pd.DataFrame(data={'alpha': [0.,1.]})
+    fit_param['beta'] = hx/ixy # proposed beta that will pick out best number of clusters
+    fit_param['beta_search'] = False
+    
+    # do IB
+    if compact>1:
+        metrics_stepwise, distributions_stepwise,\
+           metrics_converged, distributions_converged,\
+           metrics_stepwise_allreps, distributions_stepwise_allreps,\
+           metrics_converged_allreps, distributions_converged_allreps  = IB(pxy,fit_param,compact)
+        return metrics_stepwise, distributions_stepwise,\
+               metrics_converged, distributions_converged,\
+               metrics_stepwise_allreps, distributions_stepwise_allreps,\
+               metrics_converged_allreps, distributions_converged_allreps
+    elif compact>0:
+        metrics_stepwise,\
+           metrics_converged, distributions_converged,\
+           metrics_stepwise_allreps,\
+           metrics_converged_allreps, distributions_converged_allreps  = IB(pxy,fit_param,compact)
         return metrics_stepwise,\
                metrics_converged, distributions_converged,\
                metrics_stepwise_allreps,\
@@ -204,11 +241,12 @@ def test_zeroLtol(pxy,compact=1):
 
 def insert_true_clustering(exp_name,verbose=1):
     cwd = os.getcwd()
-    datapath = cwd+'/data/neco/hierarchical - uniform/'+exp_name+'_'
+    datapath = cwd+'/data/geometric/'+exp_name+'_'
     pxy = np.load(datapath+'pxy.npy')
     groups = np.load(datapath+'groups.npy')
     pxy, px, py_x, hx, hy, hy_x, ixy, X, Y, zx, zy = process_pxy(pxy)
     ptol = 10**-8
+    id_conversion = False
     
     # hand choose groupings
     #grouping1 = 30*[1]+60*[0]
@@ -218,15 +256,19 @@ def insert_true_clustering(exp_name,verbose=1):
     #groups = [grouping1,grouping2,grouping3,grouping4]
 
     # convert grouping by Xids to grouping by groupids
-    G = len(groups)    
-    groups_id = np.zeros((G,X))
-    for g in range(G): # loop over various groupings
-        grouping = groups[g]
-        for g2 in range(len(grouping)): # loop over groups within a grouping
-            group = grouping[g2]   
-            group = [x for x in group if x not in zx]                        
-            groups_id[g,group] = g2
-    groups_id = groups_id.astype(int)
+    if id_conversion:
+        G = len(groups)    
+        groups_id = np.zeros((G,X))
+        for g in range(G): # loop over various groupings
+            grouping = groups[g]
+            for g2 in range(len(grouping)): # loop over groups within a grouping
+                group = grouping[g2]   
+                group = [x for x in group if x not in zx]                        
+                groups_id[g,group] = g2
+        groups_id = groups_id.astype(int)
+    else:
+        G = max(groups)
+        groups_id = groups
     
     # init dataframe
     metrics_converged = pd.DataFrame(columns=['T','ht','ht_x','hy_t','ixt','iyt',
@@ -269,17 +311,17 @@ def insert_true_clustering(exp_name,verbose=1):
     
     return 0   
     
-def run_experiments(data_set,compact,exp_name,x):
-    """x should be a string subset of m/r/ip/in/c/z, compact of 0/1/2."""
+def run_experiments(data_set="",compact=2,exp_name="",x=""):
+    """x should be a string subset of m/r/ip/in/c/z/gb, compact of 0/1/2."""
     cwd = os.getcwd()
-    results_path = cwd+'/data/neco/'+exp_name+'_'
-    dataset_path = cwd+'/data/neco/'+data_set+'_'
+    results_path = cwd+'/data/geometric/'+exp_name+'_'
+    dataset_path = cwd+'/data/geometric/'+data_set+'_'
     compact = int(compact)
     if "m" in x:
         # make new pxy
-        pxy = gen_dir_pxy()
-        #pxy, Xdata = gen_geometric_pxy()
-        #np.save(datapath+'Xdata',Xdata)
+        pxy, Xdata, groups = gen_geometric_pxy()
+        np.save(dataset_path+'Xdata',Xdata)
+        np.save(dataset_path+'groups',groups)
         np.save(dataset_path+'pxy',pxy)
     else:
         # load existing pxy
@@ -404,4 +446,28 @@ def run_experiments(data_set,compact,exp_name,x):
                metrics_converged_allreps = test_zeroLtol(pxy,compact)
             metrics_converged.to_csv(results_path+'metrics_converged_zeroLtol.csv')
             metrics_stepwise.to_csv(results_path+'metrics_stepwise_zeroLtol.csv')
+    if "b" in x: # trying proposed optimal beta
+        if compact>1:
+            metrics_stepwise, distributions_stepwise,\
+               metrics_converged, distributions_converged,\
+               metrics_stepwise_allreps, distributions_stepwise_allreps,\
+               metrics_converged_allreps, distributions_converged_allreps = test_IB(pxy,compact)
+            metrics_converged.to_csv(results_path+'metrics_converged_bestbeta.csv')
+            metrics_stepwise.to_csv(results_path+'metrics_stepwise_bestbeta.csv')
+            distributions_converged.to_pickle(results_path+'distributions_converged_bestbeta.pkl')
+        elif compact>0:
+            metrics_stepwise,\
+               metrics_converged, distributions_converged,\
+               metrics_stepwise_allreps,\
+               metrics_converged_allreps, distributions_converged_allreps = test_IB(pxy,compact)
+            metrics_converged.to_csv(results_path+'metrics_converged_bestbeta.csv')
+            metrics_stepwise.to_csv(results_path+'metrics_stepwise_bestbeta.csv')
+            distributions_converged.to_pickle(results_path+'distributions_converged_bestbeta.pkl')
+        else:
+            metrics_stepwise,\
+               metrics_converged,\
+               metrics_stepwise_allreps,\
+               metrics_converged_allreps = test_IB(pxy,compact)
+            metrics_converged.to_csv(results_path+'metrics_converged_bestbeta.csv')
+            metrics_stepwise.to_csv(results_path+'metrics_stepwise_bestbeta.csv')
     return 0
