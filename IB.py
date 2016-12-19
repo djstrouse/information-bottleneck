@@ -887,6 +887,8 @@ def IB(pxy,fit_param,compact=1,verbose=2):
         this_fit = fit_param.iloc[irow]
         this_alpha = this_fit['alpha']
         this_betas = set_param(this_fit,'betas',def_betas)
+        if ~isinstance(this_betas,np.ndarray):
+            this_betas = np.array([this_betas])
         this_beta_search = set_param(this_fit,'beta_search',def_beta_search)
         # extract optional parameters            
         this_Tmax = set_param(this_fit,'Tmax',def_Tmax)

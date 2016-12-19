@@ -1,5 +1,6 @@
 from IB import *
 import matplotlib.pyplot as plt
+import os
 
 def gen_dir_pxy():
     # param
@@ -236,7 +237,7 @@ def plot_pxy(exp_name):
     
     # load p(x,y)
     cwd = os.getcwd()
-    datapath = cwd+'/data/neco/'+exp_name+'_'
+    datapath = cwd+'/data/geometric/'+exp_name+'_'
     pxy = np.load(datapath+'pxy.npy') 
     pxy2, px, py_x, hx, hy, hy_x, ixy, X, Y, zx, zy = process_pxy(pxy,0)
     

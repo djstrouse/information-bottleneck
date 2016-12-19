@@ -39,11 +39,11 @@ def test_IB(pxy,compact=1):
                metrics_converged_allreps
                
 def best_beta(pxy,compact=1):   
-    """just uses beta=H(X)/I(X,Y) as attempt to hit knee of IB curve"""
+    """just uses beta=.6*H(X)/I(X,Y) as attempt to hit knee of IB curve"""
     # set up fit param
     pxy, px, py_x, hx, hy, hy_x, ixy, X, Y, zx, zy = process_pxy(pxy)
     fit_param = pd.DataFrame(data={'alpha': [0.,1.]})
-    fit_param['beta'] = hx/ixy # proposed beta that will pick out best number of clusters
+    fit_param['betas'] = .6*hx/ixy # proposed beta that will pick out best number of clusters
     fit_param['beta_search'] = False
     
     # do IB
@@ -451,7 +451,7 @@ def run_experiments(data_set="",compact=2,exp_name="",x=""):
             metrics_stepwise, distributions_stepwise,\
                metrics_converged, distributions_converged,\
                metrics_stepwise_allreps, distributions_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps = test_IB(pxy,compact)
+               metrics_converged_allreps, distributions_converged_allreps = best_beta(pxy,compact)
             metrics_converged.to_csv(results_path+'metrics_converged_bestbeta.csv')
             metrics_stepwise.to_csv(results_path+'metrics_stepwise_bestbeta.csv')
             distributions_converged.to_pickle(results_path+'distributions_converged_bestbeta.pkl')
@@ -459,7 +459,7 @@ def run_experiments(data_set="",compact=2,exp_name="",x=""):
             metrics_stepwise,\
                metrics_converged, distributions_converged,\
                metrics_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps = test_IB(pxy,compact)
+               metrics_converged_allreps, distributions_converged_allreps = best_beta(pxy,compact)
             metrics_converged.to_csv(results_path+'metrics_converged_bestbeta.csv')
             metrics_stepwise.to_csv(results_path+'metrics_stepwise_bestbeta.csv')
             distributions_converged.to_pickle(results_path+'distributions_converged_bestbeta.pkl')
@@ -467,7 +467,7 @@ def run_experiments(data_set="",compact=2,exp_name="",x=""):
             metrics_stepwise,\
                metrics_converged,\
                metrics_stepwise_allreps,\
-               metrics_converged_allreps = test_IB(pxy,compact)
+               metrics_converged_allreps = best_beta(pxy,compact)
             metrics_converged.to_csv(results_path+'metrics_converged_bestbeta.csv')
             metrics_stepwise.to_csv(results_path+'metrics_stepwise_bestbeta.csv')
     return 0
