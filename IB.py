@@ -20,9 +20,10 @@ def verify_inputs(pxy,beta,alpha,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,c
         raise ValueError('beta must be a positive scalar')
     if alpha<0 or not(isinstance(alpha,(int,float))):
         raise ValueError('alpha must be a non-negative scalar')
-    if Tmax<1:
-        raise ValueError('Tmax must be a positive integer (or infinity)')
+    if Tmax is not None and (not(isinstance(Tmax,int)) or Tmax<1):
+        raise ValueError('Tmax must be a positive integer (or None)')
     if p0<-1 or p0>1 or not(isinstance(p0,(int,float))):
+        print(p0)
         raise ValueError('p0 must be a float/int between -1 and 1')
     if not(ctol_abs>=0) or not(isinstance(ctol_abs,float)):
         raise ValueError('ctol_abs must be a non-negative float')        
@@ -44,17 +45,13 @@ def verify_inputs(pxy,beta,alpha,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,c
     
 def entropy_term(x):
     """Helper function for entropy_single: calculates one term in the sum."""
-    if x==0:
-        return 0.0
-    else:
-        return -x*math.log2(x)
+    if x==0: return 0.0
+    else: return -x*math.log2(x)
 
 def entropy_single(p):
     """Returns entropy of p: H(p)=-sum(p*log(p)). (in bits)"""
     ventropy_term = np.vectorize(entropy_term)
-    vec = ventropy_term(p)
-    h = np.sum(vec)
-    return h
+    return np.sum(ventropy_term(p))
 
 def entropy(P):
     """Returns entropy of a distribution, or series of distributions.
@@ -62,8 +59,7 @@ def entropy(P):
     For the input array P [=] M x N, treats each col as a prob distribution
     (over M elements), and thus returns N entropies. If P is a vector, treats
     P as a single distribution and returns its entropy."""
-    if P.ndim==1:
-        return entropy_single(P)
+    if P.ndim==1: return entropy_single(P)
     else:
         M,N = P.shape
         H = np.zeros(N)
@@ -73,8 +69,7 @@ def entropy(P):
 
 def process_pxy(pxy,verbose=1):
     """Helper function for IB that preprocesses p(x,y) and computes metrics."""
-    if pxy.dtype!='float':
-        pxy = pxy.astype(float)
+    if pxy.dtype!='float': pxy = pxy.astype(float)
     Xorig = pxy.shape[0]
     Yorig = pxy.shape[1]
     px = pxy.sum(axis=1)
@@ -107,19 +102,14 @@ def process_pxy(pxy,verbose=1):
 
 def kl_term(x,y):
     """Helper function for kl: calculates one term in the sum."""
-    if x>0 and y>0:
-        return x*math.log2(x/y)
-    elif x==0:
-        return 0.0
-    else:
-        return math.inf
+    if x>0 and y>0: return x*math.log2(x/y)
+    elif x==0: return 0.0
+    else: return math.inf
     
 def kl_single(p,q):
     """Returns KL divergence of p and q: KL(p,q)=sum(p*log(p/q)). (in bits)"""
     vkl_term = np.vectorize(kl_term)
-    vec = vkl_term(p,q)
-    dkl = np.sum(vec)
-    return dkl
+    return np.sum(vkl_term(p,q))
     
 def kl(P,Q):
     """Returns KL divergence of one or more pairs of distributions.
@@ -127,14 +117,12 @@ def kl(P,Q):
     For the input arrays P [=] M x N and Q [=] M x L, calculates KL of each col
     of P with each col of Q, yielding the KL matrix DKL [=] N x L. If P=Q=1,
     returns a single KL divergence."""
-    if P.ndim==1 and Q.ndim==1:
-        return kl_single(P,Q)
+    if P.ndim==1 and Q.ndim==1: return kl_single(P,Q)
     elif P.ndim==1 and Q.ndim!=1: # handle vector P case
         M = len(P)
         N = 1
         M2,L = Q.shape
-        if M!=M2:
-            raise ValueError("P and Q must have same number of columns")
+        if M!=M2: raise ValueError("P and Q must have same number of columns")
         DKL = np.zeros((1,L))
         for l in range(L):
             DKL[0,l] = kl_single(P,Q[:,l])
@@ -142,16 +130,14 @@ def kl(P,Q):
         M,N = P.shape
         M2 = len(Q)
         L = 1
-        if M!=M2:
-            raise ValueError("P and Q must have same number of columns")
+        if M!=M2: raise ValueError("P and Q must have same number of columns")
         DKL = np.zeros((N,1))
         for n in range(N):
             DKL[n,0] = kl_single(P[:,n],Q)
     else:
         M,N = P.shape
         M2,L = Q.shape        
-        if M!=M2:
-            raise ValueError("P and Q must have same number of columns")    
+        if M!=M2: raise ValueError("P and Q must have same number of columns")    
         DKL = np.zeros((N,L))
         for n in range(N):
             for l in range(L):
@@ -169,31 +155,37 @@ def qt_step(qt_x,px,ptol,verbose):
         T = len(qt) # update number of clusters
         qt_x = np.multiply(qt_x,np.tile(1./np.sum(qt_x,axis=0),(T,1))) # renormalize
         qt = np.dot(qt_x,px)
-        if verbose==2:
-            print('%i cluster(s) dropped. Down to %i cluster(s).' % (np.sum(dropped),T)) 
+        if verbose==2: print('%i cluster(s) dropped. Down to %i cluster(s).' % (np.sum(dropped),T)) 
     return qt_x,qt,T
     
 def qy_t_step(qt_x,qt,px,py_x):
     """Peforms q(y|t) update step for generalized Information Bottleneck."""
-    qy_t = np.dot(py_x,np.multiply(qt_x,np.outer(1./qt,px)).T)
-    return qy_t
+    return np.dot(py_x,np.multiply(qt_x,np.outer(1./qt,px)).T)
 
 def qt_x_step(qt,py_x,qy_t,T,X,alpha,beta,verbose):
     """Peforms q(t|x) update step for generalized Information Bottleneck."""
-    if T==1: # no need for computation
-        qt_x = np.ones((1,X))
+    if T==1: qt_x = np.ones((1,X))
     else:
         qt_x = np.zeros((T,X))
         for x in range(X):
             l = vlog(qt)-beta*kl(py_x[:,x],qy_t) # [=] T x 1 # scales like X*Y*T
-            if alpha==0: # DIB
-                qt_x[np.argmax(l),x] = 1
-            else:  # IB and interpolations
-                qt_x[:,x] = vexp(l/alpha)/np.sum(vexp(l/alpha)) # note: l/alpha<-745 is where underflow creeps in
+            if alpha==0: qt_x[np.argmax(l),x] = 1
+            else: qt_x[:,x] = vexp(l/alpha)/np.sum(vexp(l/alpha)) # note: l/alpha<-745 is where underflow creeps in
     return qt_x
     
 def init_qt_x(alpha,X,T,p0):
-    """Initializes q(t|x) for generalized Information Bottleneck."""
+    """Initializes q(t|x) for generalized Information Bottleneck.
+    
+    For DIB (the alpha=0 case, points are spread as evenly across clusters as
+    possible. For nonzero alpha (including the alpha=1 IB case), the
+    initialization depends on p0. For p0=0, we use a normalized uniform random
+    vector. For p0 positive, points are spread around clusters like DIB, with
+    probability mass p0 placed on the primary cluster, and the other 1-p0 mass
+    assigned to a normalized uniform random vector over the remaining clusters.
+    For p0 negative, we use the same procedure as p0 positive, except that all
+    points have the *same* primary cluster. There is also a variable wavy that
+    can be toggled to use a lower variance initialization over the non-primary
+    clusters.""" 
     if alpha==0: # DIB: spread points evenly across clusters
         n = math.ceil(float(X)/float(T)) # approx number points per cluster
         I = np.repeat(np.arange(0,T),n).astype("int") # data-to-cluster assignment vector
@@ -258,7 +250,7 @@ def init_qt_x(alpha,X,T,p0):
                     qt_x[:,i] = u                
     return qt_x
     
-def calc_IB_metrics(qt_x,qt,qy_t,px,hy,alpha,beta):
+def calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta):
     """Calculates IB performance metrics."""
     ht = entropy(qt)
     hy_t = np.dot(qt,entropy(qy_t))
@@ -267,8 +259,20 @@ def calc_IB_metrics(qt_x,qt,qy_t,px,hy,alpha,beta):
     ixt = ht-ht_x
     L = ht-alpha*ht_x-beta*iyt
     return ht, hy_t, iyt, ht_x, ixt, L 
-
-def IB_single(pxy,beta,alpha,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,compact,verbose):
+    
+def store_sw_metrics(metrics_sw,L,ixt,iyt,ht,T,ht_x,hy_t,time,step):
+    return metrics_sw.append(pd.DataFrame(data={
+                'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T, 'ht_x': ht_x,
+                'hy_t': hy_t, 'time': time, 'step': step},
+                index = [0]), ignore_index = True)
+    
+def store_sw_dist(dist_sw,qt_x,qt,qy_t,step):    
+    return dist_sw.append(pd.DataFrame(data={
+                'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],'step': step},
+                index = [0]), ignore_index = True)
+    
+def IB_single(pxy,beta,alpha,Tmax=None,p0=.75,ctol_abs=10**-3,ctol_rel=0.,
+              ptol=10**-8,zeroLtol=1,clamp=True,compact=1,verbose=2):
     """Performs the generalized Information Bottleneck on the joint p(x,y).
     
     Note: fixed distributions denoted by p; optimized ones by q.
@@ -277,7 +281,7 @@ def IB_single(pxy,beta,alpha,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,compa
     *** see IB function documentation below ***
     
     OUTPUTS
-    metrics_stepwise = dataframe of scalar metrics for each fit step:
+    metrics_sw = dataframe of scalar metrics for each fit step:
         L = objective function value [=] scalar
         ixt = I(X,T) [=] scalar
         iyt = I(Y,T) [=] scalar
@@ -297,7 +301,7 @@ def IB_single(pxy,beta,alpha,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,compa
         p0
         ctol
         ptol
-    distributions_stepwise = dataframe of optimized distributions for each step:
+    dist_sw = dataframe of optimized distributions for each step:
         qt_x = q(t|x) = [=] T x X (note: size T changes during iterations)
         qt = q(t) [=] T x 1 (note: size T changes during iterations)
         qy_t = q(y|t) [=] Y x T (note: size T changes during iterations)
@@ -308,41 +312,49 @@ def IB_single(pxy,beta,alpha,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,compa
         p0
         ctol
         ptol
-    metrics_converged = dataframe of last (converged) step for each Tmax/fit above:
+    metrics_conv = dataframe of last (converged) step for each Tmax/fit above:
         step_time -> conv_time = time to run all steps (in s)
         step -> conv_steps = number of steps to converge
         conv_condition = string indicating reason for convergence [=] {cost_func_inc,small_changes,single_cluster,cost_func_NaN}
-    distributions_converged = dataframe of last (converged) step for each Tmax/fit above:
+    dist_conv = dataframe of last (converged) step for each Tmax/fit above:
         step_time -> conv_time = time to run all steps (in s)
         step -> conv_steps = number of steps to converge
         conv_condition = string indicating reason for convergence"""
-    
+        
+    # PRE-IB STEP INIT AND PROCESSING
+        
     verify_inputs(pxy,beta,alpha,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,compact,verbose)
     
     conv_thresh = 1 # steps in a row of small change to consider converged
     
     # process inputs
-    if isinstance(alpha,int):
-        alpha = float(alpha)
-    if isinstance(beta,int):
-        beta = float(beta)        
+    if isinstance(alpha,int): alpha = float(alpha)
+    if isinstance(beta,int): beta = float(beta)        
     pxy, px, py_x, hx, hy, hy_x, ixy, X, Y, zx, zy = process_pxy(pxy,verbose)
-    if Tmax==math.inf:
+    if Tmax is None:
         Tmax = X
-        if verbose==2:
-            print('Tmax set to %i based on X' % Tmax)
+        if verbose==2: print('Tmax set to %i based on X' % Tmax)
     elif Tmax>X:
-        if verbose==2:
-            print('Reduced Tmax from %i to %i based on X' % (Tmax,X))
+        if verbose==2: print('Reduced Tmax from %i to %i based on X' % (Tmax,X))
         Tmax = X
-    else:
-        Tmax = int(Tmax)
+    else: Tmax = int(Tmax)
         
+    # report
+    if verbose>0:
+        print('********************************************** Beginning IB fit with the following parameters **********************************************')
+        if Tmax is None:
+            print('alpha = %.2f, beta = %.1f, Tmax = None, p0 = %.3f, ctol_abs = %.1e, ctol_rel = %.1e, ptol = %.1e, zeroLtol = %.1e, clamp = %s' %\
+                  (alpha, beta, p0, ctol_abs, ctol_rel, ptol, zeroLtol, clamp))
+        else:
+            print('alpha = %.2f, beta = %.1f, Tmax = %i, p0 = %.3f, ctol_abs = %.1e, ctol_rel = %.1e, ptol = %.1e, zeroLtol = %.1e, clamp = %s' %\
+                  (alpha, beta, Tmax, p0, ctol_abs, ctol_rel, ptol, zeroLtol, clamp))
+        print('********************************************************************************************************************************************')
+                        
     # initialize dataframes
-    metrics_stepwise = pd.DataFrame(columns=['L','ixt','iyt','ht','T','ht_x',
-                                             'hy_t','step','step_time'])
-    if compact>1:
-        distributions_stepwise = pd.DataFrame(columns=['qt_x','qt','qy_t','step'])
+    metrics_sw = pd.DataFrame(columns=['L','ixt','iyt','ht','T','ht_x','hy_t','step','time'])
+    if compact>1: dist_sw = pd.DataFrame(columns=['qt_x','qt','qy_t','step'])
+        
+    # IB STEP ITERATIONS
 
     # initialize other stuff
     T = Tmax
@@ -355,45 +367,25 @@ def IB_single(pxy,beta,alpha,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,compa
     # initialize q(y|t) given q(t|x) and q(t)
     qy_t = qy_t_step(qt_x,qt,px,py_x)
     # calculate and print metrics
-    if verbose==2:
-        print('IB initialized')
-    ht, hy_t, iyt, ht_x, ixt, L = calc_IB_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
-    if verbose==2:
-        print('I(X,T) = %.6f, H(T) = %.6f, H(X) = %.6f, I(Y,T) = %.6f, I(X,Y) = %.6f, L = %.6f' % (ixt,ht,hx,iyt,ixy,L))
+    ht, hy_t, iyt, ht_x, ixt, L = calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
+    if verbose==2: print('init: I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (ixt,ht,hx,iyt,ixy,L))
     step_time = time.time() - step_start_time
-    if len(metrics_stepwise.index)==0:
-        this_index = 0
-    else:
-        this_index = max(metrics_stepwise.index)+1
-    metrics_stepwise = metrics_stepwise.append(pd.DataFrame(data={
-                                'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht,
-                                'T': T, 'ht_x': ht_x, 'hy_t': hy_t,
-                                'step_time': step_time, 'step': 0},
-                                index=[this_index]))
-    if compact>1:
-        distributions_stepwise = distributions_stepwise.append(pd.DataFrame(data={
-                                    'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],
-                                    'step': 0},
-                                    index=[this_index]))
-    del this_index
+    metrics_sw = store_sw_metrics(metrics_sw,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,step=0)
+    if compact>1: dist_sw = store_sw_dist(dist_sw,qt_x,qt,qy_t,step=0)
     
     # ITERATE STEPS 1-3 TO CONVERGENCE
     converged = 0
-    if T==1:
-        converged = conv_thresh
-        if verbose>0:
-            print('Converged due to reduction to single cluster')
-        conv_condition = 'single_cluster'
-    else:
-        conv_condition = ''
     Nsteps = 0
     L_old = L
     iter_start_time = time.time()
+    if T==1:
+        converged = conv_thresh
+        if verbose>0: print('Converged due to reduction to single cluster')
+        conv_condition = 'single_cluster'
+    else: conv_condition = ''
     while converged<conv_thresh: 
         step_start_time = time.time()
-        Nsteps += 1
-        if verbose==2:
-            print('Beginning IB step %i' % Nsteps)            
+        Nsteps += 1        
         # STEP 1: UPDATE Q(T|X)
         qt_x = qt_x_step(qt,py_x,qy_t,T,X,alpha,beta,verbose)
         # STEP 2: UPDATE Q(T)
@@ -401,263 +393,172 @@ def IB_single(pxy,beta,alpha,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,compa
         # STEP 3: UPDATE Q(Y|T)
         qy_t = qy_t_step(qt_x,qt,px,py_x)
         # calculate and print metrics
-        ht, hy_t, iyt, ht_x, ixt, L = calc_IB_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
-        if verbose==2:
-            print('I(X,T) = %.6f, H(T) = %.6f, H(X) = %.6f, I(Y,T) = %.6f, I(X,Y) = %.6f, L = %.6f' % (ixt,ht,hx,iyt,ixy,L))
+        ht, hy_t, iyt, ht_x, ixt, L = calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
+        if verbose==2: print('step %i: I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (Nsteps,ixt,ht,hx,iyt,ixy,L))
         # check for convergence
         L_abs_inc_flag = L>(L_old+ctol_abs)
         L_rel_inc_flag = L>(L_old+(abs(L_old)*ctol_rel))
+        small_changes = False
+        # check for small absolute changes
         if abs(L_old-L)<ctol_abs:
+            small_changes = True
             converged += 1
             if (converged>=conv_thresh):
                 conv_condition = 'small_abs_changes'
-                if verbose>0:
-                    print('Converged due to small absolute changes in objective')
-        else:
-            converged = 0 # reset counter if change wasn't small
+                if verbose>0: print('Converged due to small absolute changes in objective')  
+        # check for small relative changes
         if (abs(L_old-L)/abs(L_old))<ctol_rel:
-            converged = conv_thresh
-            if verbose>0:
-                print('Converged due to small relative changes in objective')
-            if len(conv_condition)==0:
-                conv_condition = 'small_rel_changes'
-            else:
-                conv_condition += '_AND_small_rel_changes'
+            small_changes = True
+            converged += 1
+            if (converged>=conv_thresh):
+                if len(conv_condition)==0: conv_condition = 'small_rel_changes'
+                else: conv_condition += '_AND_small_rel_changes'
+                if verbose>0: print('Converged due to small relative changes in objective')
+        if not(small_changes): converged = 0 # reset counter of small changes in a row
+        # check for reduction to single cluster        
         if (T==1) and not(L_abs_inc_flag) and not(L_rel_inc_flag):
             converged = conv_thresh
-            if verbose>0:
-                print('Converged due to reduction to single cluster')
-            if len(conv_condition)==0:
-                conv_condition = 'single_cluster'
-            else:
-                conv_condition += '_AND_single_cluster'
+            if verbose>0: print('Converged due to reduction to single cluster')
+            if len(conv_condition)==0: conv_condition = 'single_cluster'
+            else: conv_condition += '_AND_single_cluster'
+        # check for objective becoming NaN
         if np.isnan(L):
             converged = conv_thresh
-            if verbose>0:
-                print('Stopped because objective = NaN')
-            if len(conv_condition)==0:
-                conv_condition = 'cost_func_NaN'
-            else:
-                conv_condition += '_AND_cost_func_NaN'
+            if verbose>0: print('Stopped because objective = NaN')
+            if len(conv_condition)==0: conv_condition = 'cost_func_NaN'
+            else: conv_condition += '_AND_cost_func_NaN'
         # check if obj went up by amount above threshold (after 1st step)
         if (L_abs_inc_flag or L_rel_inc_flag) and (Nsteps>1): # if so, don't store or count this step!
             converged = conv_thresh
             if L_abs_inc_flag:
-                if verbose>0:
-                    print('Converged due to absolute increase in objective value')
-                if len(conv_condition)==0:
-                    conv_condition = 'cost_func_abs_inc'
-                else:
-                    conv_condition += '_AND_cost_func_abs_inc'
+                if verbose>0: print('Converged due to absolute increase in objective value')
+                if len(conv_condition)==0: conv_condition = 'cost_func_abs_inc'
+                else: conv_condition += '_AND_cost_func_abs_inc'
             if L_rel_inc_flag:
-                if verbose>0:
-                    print('Converged due to relative increase in objective value')
-                if len(conv_condition)==0:
-                    conv_condition = 'cost_func_rel_inc'
-                else:
-                    conv_condition += '_AND_cost_func_rel_inc'
+                if verbose>0: print('Converged due to relative increase in objective value')
+                if len(conv_condition)==0: conv_condition = 'cost_func_rel_inc'
+                else: conv_condition += '_AND_cost_func_rel_inc'
             # revert to metrics/distributions from last step
-            L = L_old
-            ixt = ixt_old
-            iyt = iyt_old
-            ht = ht_old
-            T = T_old
-            ht_x = ht_x_old
-            hy_t = hy_t_old
-            qt_x = qt_x_old
-            qt = qt_old
-            qy_t = qy_t_old
+            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t =\
+            L_old, ixt_old, iyt_old, ht_old, T_old, ht_x_old, hy_t_old, qt_x_old, qt_old, qy_t_old
         else:
             # store stepwise data
             step_time = time.time() - step_start_time 
-            this_index = max(metrics_stepwise.index)+1
-            metrics_stepwise = metrics_stepwise.append(pd.DataFrame(data={
-                                    'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht,
-                                    'T': T, 'ht_x': ht_x, 'hy_t': hy_t,
-                                    'step_time': step_time, 'step': Nsteps},
-                                    index=[this_index]))
-            if compact>1:
-                distributions_stepwise = distributions_stepwise.append(pd.DataFrame(data={
-                                        'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],
-                                        'step': Nsteps},
-                                        index=[this_index]))
-            del this_index
-            L_old = L
-            ixt_old = ixt
-            iyt_old = iyt
-            ht_old = ht
-            T_old = T
-            ht_x_old = ht_x
-            hy_t_old = hy_t
-            qt_x_old = qt_x
-            qt_old = qt
-            qy_t_old = qy_t
+            metrics_sw = store_sw_metrics(metrics_sw,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,Nsteps)
+            if compact>1: dist_sw = store_sw_dist(dist_sw,qt_x,qt,qy_t,Nsteps)
+            # store this step in case need to revert at next step
+            L_old, ixt_old, iyt_old, ht_old, T_old, ht_x_old, hy_t_old, qt_x_old, qt_old, qy_t_old =\
+            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t
     # end iterative IB steps
+    
+    # report
+    if verbose>0: print('converged in %i step(s) to: I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (Nsteps,ixt,ht,hx,iyt,ixy,L))
             
     # replace converged step with single-cluster map if better
     if T>1:
-        if verbose>0:
-            print("Trying single-cluster mapping.")
         step_start_time = time.time()
         sqt_x = np.zeros((T,X))
         sqt_x[0,:] = 1.
         sqt_x,sqt,sT = qt_step(sqt_x,px,ptol,verbose)
         sqy_t = qy_t_step(sqt_x,sqt,px,py_x)
-        sht, shy_t, siyt, sht_x, sixt, sL = calc_IB_metrics(sqt_x,sqt,sqy_t,px,hy,alpha,beta)
+        sht, shy_t, siyt, sht_x, sixt, sL = calc_metrics(sqt_x,sqt,sqy_t,px,hy,alpha,beta)
         if sL<(L-zeroLtol): # if better fit...
             conv_condition += '_AND_force_single'
-            if verbose>0:
-                print("Single-cluster mapping reduces L from %.6f to %.6f; replacing." % (L,sL))
+            if verbose>0: print("Single-cluster mapping reduces L from %.4f to %.4f; replacing solution." % (L,sL))
             # replace everything
-            qt_x = sqt_x
-            qt = sqt
-            T = sT
-            qy_t = sqy_t
-            ht = sht
-            hy_t = shy_t
-            iyt = siyt
-            ht_x = sht_x
-            ixt = sixt
-            L = sL
+            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t =\
+            sL, sixt, siyt, sht, sT, sht_x, shy_t, sqt_x, sqt, sqy_t
             # store stepwise data
             step_time = time.time() - step_start_time 
-            this_index = max(metrics_stepwise.index)+1
-            metrics_stepwise = metrics_stepwise.append(pd.DataFrame(data={
-                                    'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht,
-                                    'T': T, 'ht_x': ht_x, 'hy_t': hy_t,
-                                    'step_time': step_time, 'step': Nsteps+1},
-                                    index=[this_index]))
-            if compact>1:
-                distributions_stepwise = distributions_stepwise.append(pd.DataFrame(data={
-                                        'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],
-                                        'step': Nsteps+1},
-                                        index=[this_index]))
-            del this_index
-            L_old = L
-            ixt_old = ixt
-            iyt_old = iyt
-            ht_old = ht
-            T_old = T
-            ht_x_old = ht_x
-            hy_t_old = hy_t
-            qt_x_old = qt_x
-            qt_old = qt
-            qy_t_old = qy_t
-        elif verbose>0:
-            print("Single-cluster mapping not better; increases L from %.6f to %.6f." % (L,sL))
+            metrics_sw = store_sw_metrics(metrics_sw,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,Nsteps+1)
+            if compact>1: dist_sw = store_sw_dist(dist_sw,qt_x,qt,qy_t,Nsteps+1)
+            L_old, ixt_old, iyt_old, ht_old, T_old, ht_x_old, hy_t_old, qt_x_old, qt_old, qy_t_old =\
+            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t
+            if verbose>0: print('single-cluster solution: I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (ixt,ht,hx,iyt,ixy,L))            
+        elif verbose>0: print("Single-cluster mapping not better; changes L from %.4f to %.4f (zeroLtol = %.1e)." % (L,sL,zeroLtol))
     # end single-cluster check
     
+    # build converged solution dataframe
     conv_time = time.time() - iter_start_time
-    metrics_converged = pd.DataFrame(data={
-                            'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht,
-                            'T': T, 'ht_x': ht_x, 'hy_t': hy_t,
-                            'conv_time': conv_time, 'conv_steps': Nsteps,
-                            'hx': hx, 'ixy': ixy, 'Tmax': Tmax,
-                            'beta': beta, 'alpha': alpha, 'p0': p0,
-                            'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
-                            'ptol': ptol, 'zeroLtol': zeroLtol,
-                            'conv_condition': conv_condition, 'clamp': False},
-                            index=[0])
-    if compact>0:
-        distributions_converged = pd.DataFrame(data={
-                                'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],
-                                'Tmax': Tmax, 'beta': beta, 'alpha': alpha,
-                                'p0': p0, 'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
-                                'ptol': ptol, 'zeroLtol': zeroLtol,
-                                'conv_condition': conv_condition, 'clamp': False},
-                                index=[0])
+    metrics_conv = pd.DataFrame(data={
+                        'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T,
+                        'ht_x': ht_x, 'hy_t': hy_t, 'hx': hx, 'ixy': ixy,
+                        'time': conv_time, 'step': Nsteps, 'Tmax': Tmax,
+                        'beta': beta, 'alpha': alpha, 'p0': p0,
+                        'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
+                        'ptol': ptol, 'zeroLtol': zeroLtol,
+                        'conv_condition': conv_condition, 'clamp': False},
+                        index=[0])
+    if compact>0: dist_conv = pd.DataFrame(data={
+                        'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],
+                        'Tmax': Tmax, 'beta': beta, 'alpha': alpha,
+                        'p0': p0, 'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
+                        'ptol': ptol, 'zeroLtol': zeroLtol,
+                        'time': conv_time, 'step': Nsteps,
+                        'conv_condition': conv_condition, 'clamp': False},
+                        index=[0])
                                 
-    # add in stuff that doesn't vary by step
-    metrics_stepwise['hx'] = hx
-    metrics_stepwise['ixy'] = ixy
-    metrics_stepwise['Tmax'] = Tmax
-    metrics_stepwise['beta'] = beta
-    metrics_stepwise['alpha'] = alpha  
-    metrics_stepwise['p0'] = p0
-    metrics_stepwise['ctol_abs'] = ctol_abs
-    metrics_stepwise['ctol_rel'] = ctol_rel
-    metrics_stepwise['ptol'] = ptol 
-    metrics_stepwise['zeroLtol'] = zeroLtol
+    # add in stuff that doesn't vary by step to the stepwise dataframe
+    metrics_sw['hx'] = hx
+    metrics_sw['ixy'] = ixy
+    metrics_sw['Tmax'] = Tmax
+    metrics_sw['beta'] = beta
+    metrics_sw['alpha'] = alpha  
+    metrics_sw['p0'] = p0
+    metrics_sw['ctol_abs'] = ctol_abs
+    metrics_sw['ctol_rel'] = ctol_rel
+    metrics_sw['ptol'] = ptol 
+    metrics_sw['zeroLtol'] = zeroLtol
     if compact>1:
-        distributions_stepwise['Tmax'] = Tmax
-        distributions_stepwise['beta'] = beta
-        distributions_stepwise['alpha'] = alpha
-        distributions_stepwise['p0'] = p0
-        distributions_stepwise['ctol_abs'] = ctol_abs
-        distributions_stepwise['ctol_rel'] = ctol_rel
-        distributions_stepwise['ptol'] = ptol
-        distributions_stepwise['zeroLtol'] = zeroLtol
+        dist_sw['Tmax'] = Tmax
+        dist_sw['beta'] = beta
+        dist_sw['alpha'] = alpha
+        dist_sw['p0'] = p0
+        dist_sw['ctol_abs'] = ctol_abs
+        dist_sw['ctol_rel'] = ctol_rel
+        dist_sw['ptol'] = ptol
+        dist_sw['zeroLtol'] = zeroLtol
     
     # optional clamping step (doesn't apply to DIB)
-    if (alpha>0) and clamp:
-        
-        start_time = time.time()
-    
-        if verbose>0:
-            print('****************************** Clamping IB fit with following parameters ******************************')
-            if Tmax == math.inf:
-                print('alpha = %.6f, beta = %.6f, Tmax = inf, p0 = %.6f, ctol_abs = %.6f, ctol_rel = %.6f, ptol = %.6f'\
-                    % (alpha,beta,p0,ctol_abs,ctol_rel,ptol))
-            else:
-                print('alpha = %.6f, beta = %.6f, Tmax = %i, p0 = %.6f, ctol_abs = %.6f, ctol_rel = %.6f, ptol = %.6f'\
-                    % (alpha,beta,Tmax,p0,ctol_abs,ctol_rel,ptol))
-            print('**************************************************************************************************')
-        
+    if alpha>0 and clamp:       
+        clamp_start_time = time.time()        
         # STEP 1: CLAMP Q(T|X)
         for x in range(X):
             tstar = np.argmax(qt_x[:,x])
             qt_x[:,x] = 0
-            qt_x[tstar,x] = 1
-            del tstar
-        del x
-        
+            qt_x[tstar,x] = 1        
         # STEP 2: UPDATE Q(T)
-        qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)
-        
+        qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)        
         # STEP 3: UPDATE Q(Y|T)
-        qy_t = qy_t_step(qt_x,qt,px,py_x)
-        
+        qy_t = qy_t_step(qt_x,qt,px,py_x)        
         # calculate and print metrics
-        ht, hy_t, iyt, ht_x, ixt, L = calc_IB_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
-        if verbose>0:
-            print('***** unclamped fit *****')
-            print('I(X,T) = %.6f, H(T) = %.6f, H(X) = %.6f, I(Y,T) = %.6f, I(X,Y) = %.6f, L = %.6f' % (ixt_old,ht_old,hx,iyt_old,ixy,L_old))
-            print('***** clamped fit *****')
-            print('I(X,T) = %.6f, H(T) = %.6f, H(X) = %.6f, I(Y,T) = %.6f, I(X,Y) = %.6f, L = %.6f' % (ixt,ht,hx,iyt,ixy,L))
-            
+        ht, hy_t, iyt, ht_x, ixt, L = calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
+        if verbose>0: print('clamped: I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (ixt,ht,hx,iyt,ixy,L))            
         # store everything
-        this_step_time = time.time()-start_time
-        metrics_converged = metrics_converged.append(pd.DataFrame(data={
-                        'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht,
-                        'T': T, 'ht_x': ht_x, 'hy_t': hy_t,
-                        'conv_time': conv_time+this_step_time, 'conv_steps': Nsteps+1,
-                        'hx': hx, 'ixy': ixy, 'Tmax': Tmax,
-                        'beta': beta, 'alpha': alpha, 'p0': p0, 'zeroLtol': zeroLtol,
-                        'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
+        clamp_step_time = time.time()-clamp_start_time
+        metrics_conv = metrics_conv.append(pd.DataFrame(data={
+                        'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T,
+                        'ht_x': ht_x, 'hy_t': hy_t, 'hx': hx, 'ixy': ixy,
+                        'time': conv_time+clamp_step_time, 'step': Nsteps+1,
+                        'Tmax': Tmax, 'beta': beta, 'alpha': alpha, 'p0': p0,
+                        'zeroLtol': zeroLtol, 'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
                         'ptol': ptol, 'conv_condition': conv_condition,
-                        'clamp': True},
-                        index=[1]))
-        if compact>0:
-            distributions_converged = distributions_converged.append(pd.DataFrame(data={
-                            'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],
-                            'Tmax': Tmax, 'beta': beta, 'alpha': alpha,
-                            'p0': p0, 'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
-                            'ptol': ptol, 'zeroLtol': zeroLtol,
-                            'conv_condition': conv_condition, 'clamp': True},
-                            index=[1]))
+                        'clamp': True}, index=[0]), ignore_index = True)
+        if compact>0: dist_conv = dist_conv.append(pd.DataFrame(data={
+                        'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],
+                        'time': conv_time+clamp_step_time, 'step': Nsteps+1,
+                        'Tmax': Tmax, 'beta': beta, 'alpha': alpha,
+                        'p0': p0, 'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
+                        'ptol': ptol, 'zeroLtol': zeroLtol,
+                        'conv_condition': conv_condition, 'clamp': True},
+                        index=[0]), ignore_index = True)
     
     # return results
-    if compact>1:
-        return metrics_stepwise, distributions_stepwise,\
-                metrics_converged, distributions_converged
-    elif compact>0:
-        return metrics_stepwise,\
-                metrics_converged, distributions_converged
-    else:
-        return metrics_stepwise,\
-                metrics_converged
+    if compact<=1: dist_sw = None
+    if compact==0: dist_conv = None
+    return metrics_sw, dist_sw, metrics_conv, dist_conv
             
-def refine_beta(metrics_converged,verbose=2):
+def refine_beta(metrics_conv,verbose=2):
     """Helper function for IB to refine beta parameter."""
     
     # parameters governing insertion of betas, or when there is a transition to NaNs (due to under/overflow)
@@ -676,101 +577,83 @@ def refine_beta(metrics_converged,verbose=2):
     f1 = 2 # new betas will be maxbeta*f0.^1:l0
     max_beta_allowed = 100 # any proposed betas above this will be filtered out and replaced it max_beta_allowed
 
-    # sort by beta
-    metrics_converged = metrics_converged.sort_values(by='beta')
+    # sort fits by beta
+    metrics_conv = metrics_conv.sort_values(by='beta')
     
     # init
-    new_betas = np.array([])
+    new_betas = []
     NaNtran = False
-    ixy = metrics_converged['ixy'].iloc[0]
-    logT = math.log2(metrics_converged['Tmax'].iloc[0])
-    if verbose>0:
-        print('-----------------------------------')
+    ixy = metrics_conv['ixy'].iloc[0]
+    logT = math.log2(metrics_conv['Tmax'].iloc[0])
+    if verbose>0: print('-----------------------------------')
     
     # check that smallest beta was small enough
-    if metrics_converged['ixt'].min()>eps0:
-        minbeta = metrics_converged['beta'].min()
-        betas_to_add = np.array([minbeta*(f0**n) for n in range(1,l0+1)])
-        new_betas = np.append(new_betas,betas_to_add)
-        if verbose==2:
-            print('Added %i small betas. %.6f was too large.' % (l0,minbeta))
-        del betas_to_add
+    if metrics_conv['ixt'].min()>eps0:
+        minbeta = metrics_conv['beta'].min()
+        new_betas += [minbeta*(f0**n) for n in range(1,l0+1)]
+        if verbose==2: print('Added %i small betas. %.1f was too large.' % (l0,minbeta))
     
     # check for gaps to fill
-    for i in range(metrics_converged.shape[0]-1):
-        beta1 = metrics_converged['beta'].iloc[i]
-        beta2 = metrics_converged['beta'].iloc[i+1]
-        if (beta2-beta1)<min_abs_res or ((beta2-beta1)/beta1)<min_rel_res: # if beta diff small than absolute/relative resolution, just check for NaNtran
-            cc1 = metrics_converged['conv_condition'].iloc[i]
-            cc2 = metrics_converged['conv_condition'].iloc[i+1]            
-            NaNtran = (("cost_func_NaN" not in cc1) and ("cost_func_NaN" in cc2))
-        else: # otherwise, do all gap checks
-            iyt1 = metrics_converged['iyt'].iloc[i]
-            iyt2 = metrics_converged['iyt'].iloc[i+1]
-            ixt1 = metrics_converged['ixt'].iloc[i]
-            ixt2 = metrics_converged['ixt'].iloc[i+1]
-            ht1 = metrics_converged['ht'].iloc[i]
-            ht2 = metrics_converged['ht'].iloc[i+1]
-            cc1 = metrics_converged['conv_condition'].iloc[i]
-            cc2 = metrics_converged['conv_condition'].iloc[i+1]            
-            NaNtran = (("cost_func_NaN" not in cc1) and ("cost_func_NaN" in cc2))
-            
+    for i in range(metrics_conv.shape[0]-1):
+        beta1 = metrics_conv['beta'].iloc[i]
+        beta2 = metrics_conv['beta'].iloc[i+1]
+        cc1 = metrics_conv['conv_condition'].iloc[i]
+        cc2 = metrics_conv['conv_condition'].iloc[i+1]
+        NaNtran = (("cost_func_NaN" not in cc1) and ("cost_func_NaN" in cc2))
+        # if beta gap not too small, do all metric gap checks
+        if (beta2-beta1)>min_abs_res and ((beta2-beta1)/beta1)>min_rel_res:
+            iyt1 = metrics_conv['iyt'].iloc[i]
+            iyt2 = metrics_conv['iyt'].iloc[i+1]
+            ixt1 = metrics_conv['ixt'].iloc[i]
+            ixt2 = metrics_conv['ixt'].iloc[i+1]
+            ht1 = metrics_conv['ht'].iloc[i]
+            ht2 = metrics_conv['ht'].iloc[i+1]            
             if ((abs(iyt1-iyt2)/ixy)>del_R) or\
                ((abs(ixt1-ixt2)/logT)>del_C) or\
                ((abs(ht1-ht2)/logT)>del_C) or\
                NaNtran:
-                   betas_to_add = np.linspace(beta1,beta2,l+2)[1:l+1]
-                   new_betas = np.append(new_betas,betas_to_add)
-                   del betas_to_add
-                   if verbose==2:
-                       print('Added %i betas between %.3f and %.3f.' % (l,beta1,beta2))
+                   new_betas += list(np.linspace(beta1,beta2,l+2)[1:l+1])
+                   if verbose==2: print('Added %i betas between %.1f and %.1f.' % (l,beta1,beta2))
             if NaNtran: # stop search if there was a NaNtran
-                if verbose==2:
-                    print('(...because there was a transition to NaNs.)')
+                if verbose==2: print('(...because there was a transition to NaNs.)')
                 break
     
     # check that largest beta was large enough
-    if ((metrics_converged['iyt'].max()/ixy)<eps1) and ~NaNtran:
-        maxbeta = metrics_converged['beta'].max()
-        betas_to_add = np.array([maxbeta*(f1**n) for n in range(1,l1+1)])
-        new_betas = np.append(new_betas,betas_to_add)
-        if verbose==2:
-            print('Added %i large betas. %.3f was too small.' % (l1,maxbeta))
-        del betas_to_add
+    if ((metrics_conv['iyt'].max()/ixy)<eps1) and ~NaNtran:
+        maxbeta = metrics_conv['beta'].max()
+        new_betas += [maxbeta*(f1**n) for n in range(1,l1+1)]
+        if verbose==2: print('Added %i large betas. %.1f was too small.' % (l1,maxbeta))
         
     # filter out betas above max_beta_allowed
-    too_large_mask = new_betas>max_beta_allowed
-    to_keep_mask = new_betas<max_beta_allowed
-    max_beta_allowed_used = (metrics_converged['beta'].max()==max_beta_allowed)
-    if any(too_large_mask):
-        new_betas = new_betas[to_keep_mask]
-        if verbose==2:
-            print('Filtered out %i betas larger than max_beta_allowed.' % np.sum(too_large_mask))
-        if max_beta_allowed_used:
-            if verbose==2:
-                print('...and not replaced since max_beta_allowed = %i already used.' % max_beta_allowed)
+    if any([beta>max_beta_allowed for beta in new_betas]):
+        new_betas = [beta for beta in new_betas if beta<max_beta_allowed]
+        if verbose==2: print('Filtered out %i betas larger than max_beta_allowed.' % len([beta for beta in new_betas if beta>max_beta_allowed]))
+        if max_beta_allowed in (metrics_conv['beta'].values+new_betas):
+            if verbose==2: print('...and not replaced since max_beta_allowed = %i already used.' % max_beta_allowed)
         else:
-            new_betas = np.append(new_betas,max_beta_allowed)
-            if verbose==2:
-                print('And replaced them with max_beta_allowed = %i.' % max_beta_allowed)        
+            new_betas += max_beta_allowed
+            if verbose==2: print('And replaced them with max_beta_allowed = %i.' % max_beta_allowed)        
     
     if verbose>0:
-        print('Added %i new betas.' % len(new_betas))
+        print('Added %i new beta(s).' % len(new_betas))
         print('-----------------------------------')
 
     return new_betas
     
 def set_param(fit_param,param_name,def_val):
-    """Helper function for IB to handle setting of fit parameters."""
-    if param_name in fit_param.index.values: # check if param included 
-        param_val = fit_param[param_name]
-        if np.isnan(param_val) or math.isinf(param_val): # if so, check val
-            param = def_val
-        else:
-            param = param_val
-    else: # if not, use default
-        param = def_val
+    """Helper function for IB.py to handle setting of fit parameters."""
+    param = fit_param.get(param_name,def_val) # extract param, def = def_val
+    if param is None: param = def_val # if extracted param is None, use def_val
     return param
+
+def make_param_dict(fit_param,*args):
+    """Helper function for IB.py to handle setting of keyword arguments for the
+    IB_single.py function."""
+    param_dict = {}
+    for arg in args: # loop over column names passed
+        if fit_param.get(arg,None) is not None: # if col specified exists and isn't None...
+            param_dict[arg] = fit_param[arg] # ...add to keyword dictionary
+    return param_dict
 
 def IB(pxy,fit_param,compact=1,verbose=2):
     """Performs many generalized IB fits to a single p(x,y).
@@ -804,6 +687,10 @@ def IB(pxy,fit_param,compact=1,verbose=2):
         zeroLtol = if L>zeroLtol, revert to solution mapping all x to same t (with L=0) [=] non-neg scalar
         clamp = if true, for all non-DIB fits, insert a clamped version of the solution
             into the results after convergence [=] boolean
+        geoapprox = if true, uses the approx algorithm derived for geometric data,
+            requires the optional Xdata argument to be passed with data point
+            coordinates in the rows (N x d np array) [=] boolean
+        
         *** default parameter values below ***
             
     OPTIONAL INPUTS
@@ -811,376 +698,222 @@ def IB(pxy,fit_param,compact=1,verbose=2):
     compact = integer indicating how much data to save [=] 0/1/2
             (0: only save metrics;
              1: also save converged distributions;
-             2: also save stepwise distributions)"""
+             2: also save stepwise distributions)
+    Xdata = array specifying the data point locations; N rows, each specifiying
+        the d coordinates of that data point [=] N x d np array"""
     
     # set defaults
-    def_betas = np.array([.1,1,2,3,4,5,7,9,10])
+    def_betas = [.1,1,2,3,4,5,7,9,10]
+    def_betas.reverse()
     def_beta_search = True
-    def_Tmax = math.inf
-    def_p0 = .75
-    def_ctol_abs = 10**-3
-    def_ctol_rel = 0.
-    def_ptol = 10**-8
     def_max_fits = 100
     def_max_time = 7*24*60*60 # 1 week
     def_repeats = 1
-    def_zeroLtol = 1
-    def_clamp = True
+    
+    # frequently used column names
+    metrics_cols = ['L','T','ht','ht_x','hy_t','ixt','iyt','hx','ixy']
+    dist_cols = ['qt_x','qt','qy_t']
+    converged_cols = ['conv_condition','clamp']
+    all_cols = ['alpha','beta','Tmax','p0','ctol_abs','ctol_rel',
+                'ptol','zeroLtol','step','time','repeat','repeats']
     
     # initialize dataframes
-    metrics_stepwise_allreps = pd.DataFrame(columns=['L','T','ht','ht_x','hy_t',
-                                             'ixt','iyt','step','step_time',
-                                             'hx','ixy','Tmax','beta','alpha',
-                                             'p0','ctol_abs','ctol_rel','ptol',
-                                             'zeroLtol','repeat','repeats'])
-    if compact>1:
-        distributions_stepwise_allreps = pd.DataFrame(columns=['qt','qt_x','qy_t',
-                                                      'step','Tmax','beta','alpha',
-                                                      'p0','ctol_abs','ctol_rel',
-                                                      'ptol','zeroLtol',
-                                                      'repeat','repeats'])
-                                                                                           
-    metrics_converged_allreps = pd.DataFrame(columns=['L','T','conv_steps','conv_time',
-                                              'ht','ht_x','hy_t','ixt','iyt',
-                                              'hx','ixy','Tmax','beta','alpha',
-                                              'p0','ctol_abs','ctol_rel','ptol',
-                                              'zeroLtol','conv_condition','clamp',
-                                              'repeat','repeats'])
-    if compact>0:
-        distributions_converged_allreps = pd.DataFrame(columns=['qt','qt_x','qy_t',
-                                                        'Tmax','beta','alpha',
-                                                        'p0','ctol_abs','ctol_rel',
-                                                        'ptol','zeroLtol',
-                                                        'conv_condition','clamp',
-                                                        'repeat','repeats'])
-
-    metrics_stepwise = pd.DataFrame(columns=['L','T','ht','ht_x','hy_t',
-                                             'ixt','iyt','step','step_time',
-                                             'hx','ixy','Tmax','beta','alpha',
-                                             'p0','ctol_abs','ctol_rel','ptol',
-                                             'zeroLtol','repeat','repeats'])
-    if compact>1:
-        distributions_stepwise = pd.DataFrame(columns=['qt','qt_x','qy_t',
-                                                      'step','Tmax','beta','alpha',
-                                                      'p0','ctol_abs','ctol_rel',
-                                                      'ptol','zeroLtol',
-                                                      'repeat','repeats']) 
-                                                                                              
-    metrics_converged = pd.DataFrame(columns=['L','T','conv_steps','conv_time',
-                                              'ht','ht_x','hy_t','ixt','iyt',
-                                              'hx','ixy','Tmax','beta','alpha',
-                                              'p0','ctol_abs','ctol_rel','ptol',
-                                              'zeroLtol','conv_condition','clamp',
-                                              'repeat','repeats'])
-                                              
-    if compact>0:
-        distributions_converged = pd.DataFrame(columns=['qt','qt_x','qy_t',
-                                                        'Tmax','beta','alpha',
-                                                        'p0','ctol_abs','ctol_rel',
-                                                        'ptol','zeroLtol',
-                                                        'conv_condition','clamp',
-                                                        'repeat','repeats'])
+    metrics_sw = pd.DataFrame(columns=all_cols+metrics_cols)
+    metrics_sw_allreps = pd.DataFrame(columns=all_cols+metrics_cols)
+    metrics_conv = pd.DataFrame(columns=all_cols+metrics_cols+converged_cols)
+    metrics_conv_allreps = pd.DataFrame(columns=all_cols+metrics_cols+converged_cols)
+    if compact>1: dist_sw = pd.DataFrame(columns=all_cols+dist_cols)
+    if compact>1: dist_sw_allreps = pd.DataFrame(columns=all_cols+dist_cols) 
+    if compact>0: dist_conv = pd.DataFrame(columns=all_cols+dist_cols+converged_cols)
+    if compact>0: dist_conv_allreps = pd.DataFrame(columns=all_cols+dist_cols+converged_cols)                                                                                            
     
     # iterate over fit parameters (besides beta, which is done below)                                
     for irow in range(len(fit_param.index)):
-        # extract required parameters
+        
+        # extract parameters for this fit
         this_fit = fit_param.iloc[irow]
         this_alpha = this_fit['alpha']
-        this_betas = set_param(this_fit,'betas',def_betas)
-        if ~isinstance(this_betas,np.ndarray):
-            this_betas = np.array([this_betas])
+        # optional parameters that have defaults set above
+        this_betas = set_param(this_fit,'betas',def_betas[:]) # slice here to pass by value, not ref
         this_beta_search = set_param(this_fit,'beta_search',def_beta_search)
-        # extract optional parameters            
-        this_Tmax = set_param(this_fit,'Tmax',def_Tmax)
-        if this_alpha>0:
-            this_p0 = set_param(this_fit,'p0',def_p0)
-        else:
-            this_p0 = 1.
-        this_ctol_abs = set_param(this_fit,'ctol_abs',def_ctol_abs)
-        this_ctol_rel = set_param(this_fit,'ctol_rel',def_ctol_rel)
-        this_ptol = set_param(this_fit,'ptol',def_ptol)
         this_max_fits = set_param(this_fit,'max_fits',def_max_fits)
         this_max_time = set_param(this_fit,'max_time',def_max_time)
-        this_repeats = set_param(this_fit,'repeats',def_repeats)
-        this_zeroLtol = set_param(this_fit,'zeroLtol',def_zeroLtol)
-        this_clamp = set_param(this_fit,'clamp',def_clamp)
+        this_repeats = int(set_param(this_fit,'repeats',def_repeats))
+        # optional parameters that have defaults set by IB_single.py
+        param_dict = make_param_dict(this_fit,'Tmax','p0','ctol_abs','ctol_rel','ptol','zeroLtol','clamp') 
         # make pre-fitting initializations
         betas = this_betas # stack of betas
         fit_count = 0
         fit_time = 0
         fit_start_time = time.time()
-        these_betas_metrics_converged = pd.DataFrame(columns=['ht','ixt','iyt',
-                                                        'hx','ixy','Tmax','beta',
-                                                        'conv_condition']) # used for beta refinement
-        while (fit_count<=this_max_fits) and (fit_time<=this_max_time) and (betas.size>0):
-            this_beta = betas[0] # use beta at front of list
-            
+        # this df is used for beta refinement
+        these_betas_metrics_conv = pd.DataFrame(columns=['ht','ixt','iyt','hx','ixy','Tmax','beta','conv_condition'])
+        
+        while (fit_count<=this_max_fits) and (fit_time<=this_max_time) and (len(betas)>0):
+            # pop beta from stack
+            this_beta = betas.pop()            
             # init data structures that will store the repeated fits for this particular setting of parameters
-            these_reps_metrics_stepwise = pd.DataFrame(columns=['L','T','ht','ht_x','hy_t',
-                                                     'ixt','iyt','step','step_time',
-                                                     'hx','ixy','Tmax','beta','alpha',
-                                                     'p0','ctol_abs','ctol_rel','ptol','zeroLtol',
-                                                     'repeat','repeats'])
-            if compact>1:
-                these_reps_distributions_stepwise = pd.DataFrame(columns=['qt','qt_x','qy_t',
-                                                              'step','Tmax','beta','alpha',
-                                                              'p0','ctol_abs','ctol_rel','ptol',
-                                                              'zeroLtol','repeat','repeats'])
-                                                                                                                         
-            these_reps_metrics_converged = pd.DataFrame(columns=
-                                         ['L','T','conv_steps','conv_time',
-                                          'ht','ht_x','hy_t','ixt','iyt',
-                                          'hx','ixy','Tmax','beta','alpha',
-                                          'p0','ctol_abs','ctol_rel','ptol',
-                                          'zeroLtol','conv_condition','clamp',
-                                          'repeat','repeats'])
-            if compact>0:
-                these_reps_distributions_converged = pd.DataFrame(columns=
-                                                   ['qt','qt_x','qy_t',
-                                                    'Tmax','beta','alpha',
-                                                    'p0','ctol_abs','ctol_rel',
-                                                    'ptol','zeroLtol',
-                                                    'conv_condition','clamp',
-                                                    'repeat','repeats'])
-                                                    
+            these_reps_metrics_sw = pd.DataFrame(columns=all_cols+metrics_cols)
+            these_reps_metrics_conv = pd.DataFrame(columns=all_cols+metrics_cols+converged_cols)
+            if compact>1: these_reps_dist_sw = pd.DataFrame(columns=all_cols+dist_cols)                                                                                                                         
+            if compact>0: these_reps_dist_conv = pd.DataFrame(columns=all_cols+dist_cols+converged_cols)
+            
+            # loop over repeats                                        
             for repeat in range(this_repeats):
                 # do a single fit
-                if verbose>0:
-                    print('****************************** Running IB with following parameters ******************************')
-                    if this_Tmax == math.inf:
-                        print('alpha = %.6f, beta = %.6f, Tmax = inf, p0 = %.6f, ctol_abs = %.6f, ctol_rel = %.6f, ptol = %.6f, zeroLtol = %.6f, repeat = %i of %i'\
-                            % (this_alpha,this_beta,this_p0,this_ctol_abs,this_ctol_rel,this_ptol,this_zeroLtol,repeat,this_repeats))
-                    else:
-                        print('alpha = %.6f, beta = %.6f, Tmax = %i, p0 = %.6f, ctol_abs = %.6f, ctol_rel = %.6f, ptol = %.6f, zeroLtol = %.6f, repeat = %i of %i'\
-                            % (this_alpha,this_beta,this_Tmax,this_p0,this_ctol_abs,this_ctol_rel,this_ptol,this_zeroLtol,repeat,this_repeats))
-                    print('**************************************************************************************************')
-                if compact>1:
-                    this_metrics_stepwise, this_distributions_stepwise, \
-                    this_metrics_converged, this_distributions_converged = \
-                    IB_single(pxy,this_beta,this_alpha,this_Tmax,
-                              this_p0,this_ctol_abs,this_ctol_rel,this_ptol,this_zeroLtol,this_clamp,compact,verbose)
-                elif compact>0:
-                    this_metrics_stepwise, \
-                    this_metrics_converged, this_distributions_converged = \
-                    IB_single(pxy,this_beta,this_alpha,this_Tmax,
-                              this_p0,this_ctol_abs,this_ctol_rel,this_ptol,this_zeroLtol,this_clamp,compact,verbose)
-                else:
-                    this_metrics_stepwise, \
-                    this_metrics_converged = \
-                    IB_single(pxy,this_beta,this_alpha,this_Tmax,
-                              this_p0,this_ctol_abs,this_ctol_rel,this_ptol,this_zeroLtol,this_clamp,compact,verbose)
+                if verbose>0: print("+++++++++++ repeat %i of %i +++++++++++" % (repeat+1,this_repeats))
+                this_metrics_sw, this_dist_sw, this_metrics_conv, this_dist_conv = \
+                    IB_single(pxy,this_beta,this_alpha,compact=compact,verbose=verbose,**param_dict)
                 # add repeat labels
-                this_metrics_stepwise['repeat'] = repeat
-                this_metrics_stepwise['repeats'] = this_repeats
-                if compact>1:
-                    this_distributions_stepwise['repeat'] = repeat
-                    this_distributions_stepwise['repeats'] = this_repeats
-                this_metrics_converged['repeat'] = repeat
-                this_metrics_converged['repeats'] = this_repeats
-                if compact>0:
-                    this_distributions_converged['repeat'] = repeat
-                    this_distributions_converged['repeats'] = this_repeats
+                this_metrics_sw['repeat'] = repeat
+                this_metrics_sw['repeats'] = this_repeats
+                this_metrics_conv['repeat'] = repeat
+                this_metrics_conv['repeats'] = this_repeats
+                if compact>1: this_dist_sw['repeat'] = repeat
+                if compact>1: this_dist_sw['repeats'] = this_repeats
+                if compact>0: this_dist_conv['repeat'] = repeat
+                if compact>0: this_dist_conv['repeats'] = this_repeats
                 # add this repeat to these repeats
-                these_reps_metrics_stepwise = these_reps_metrics_stepwise.append(this_metrics_stepwise) 
-                if compact>1:
-                    these_reps_distributions_stepwise = these_reps_distributions_stepwise.append(this_distributions_stepwise)  
-                these_reps_metrics_converged = these_reps_metrics_converged.append(this_metrics_converged)
-                if compact>0:
-                    these_reps_distributions_converged = these_reps_distributions_converged.append(this_distributions_converged)  
+                these_reps_metrics_sw = these_reps_metrics_sw.append(this_metrics_sw, ignore_index = True)
+                these_reps_metrics_conv = these_reps_metrics_conv.append(this_metrics_conv, ignore_index = True)
+                if compact>1: these_reps_dist_sw = these_reps_dist_sw.append(this_dist_sw, ignore_index = True)
+                if compact>0: these_reps_dist_conv = these_reps_dist_conv.append(this_dist_conv, ignore_index = True)  
             # end of repeat fit loop for single beta 
-                
-            # reindex fits to work with existing dataframe
-            if len(metrics_stepwise_allreps.index)>0:
-                num_there = max(metrics_stepwise_allreps.index)
-            else:
-                num_there = 0
-            num_added = len(these_reps_metrics_stepwise.index)
-            these_reps_metrics_stepwise.index = np.arange(num_there+1,num_there+num_added+1)
-            if compact>1:
-                these_reps_distributions_stepwise.index = np.arange(num_there+1,num_there+num_added+1)
-            del num_there, num_added
-            if len(metrics_converged_allreps.index)>0:
-                num_there = max(metrics_converged_allreps.index)
-            else:
-                num_there = 0
-            num_added = len(these_reps_metrics_converged.index)
-            these_reps_metrics_converged.index = np.arange(num_there+1,num_there+num_added+1)
-            if compact>0:
-                these_reps_distributions_converged.index = np.arange(num_there+1,num_there+num_added+1)
-            del num_there, num_added
             
             # store all repeats
-            metrics_stepwise_allreps = metrics_stepwise_allreps.append(these_reps_metrics_stepwise)
-            if compact>1:
-                distributions_stepwise_allreps = distributions_stepwise_allreps.append(these_reps_distributions_stepwise)
-            metrics_converged_allreps = metrics_converged_allreps.append(these_reps_metrics_converged)
-            if compact>0:
-                distributions_converged_allreps = distributions_converged_allreps.append(these_reps_distributions_converged)
+            metrics_sw_allreps = metrics_sw_allreps.append(these_reps_metrics_sw, ignore_index = True)
+            metrics_conv_allreps = metrics_conv_allreps.append(these_reps_metrics_conv, ignore_index = True)
+            if compact>1: dist_sw_allreps = dist_sw_allreps.append(these_reps_dist_sw, ignore_index = True)
+            if compact>0: dist_conv_allreps = dist_conv_allreps.append(these_reps_dist_conv, ignore_index = True)
                 
             # find best repeat (lowest L)
-            these_reps_metrics_converged_unclamped = these_reps_metrics_converged[these_reps_metrics_converged['clamp']==False]
-            best_id = these_reps_metrics_converged_unclamped['L'].idxmin()
+            these_reps_metrics_conv_unclamped = these_reps_metrics_conv[these_reps_metrics_conv['clamp']==False]
+            best_id = these_reps_metrics_conv_unclamped['L'].idxmin()
             if np.isnan(best_id): # if all repeats NaNs, just use first repeat
                 best_repeat = 0
             else: # otherwise use best
-                best_repeat = these_reps_metrics_converged['repeat'].loc[best_id]
-            best_metrics_converged = these_reps_metrics_converged[these_reps_metrics_converged['repeat']==best_repeat]
-            if compact>0:            
-                best_distributions_converged = these_reps_distributions_converged[these_reps_distributions_converged['repeat']==best_repeat]
-            best_metrics_stepwise = these_reps_metrics_stepwise[these_reps_metrics_stepwise['repeat']==best_repeat]
-            if compact>1:
-                best_distributions_stepwise = these_reps_distributions_stepwise[these_reps_distributions_stepwise['repeat']==best_repeat]
+                best_repeat = these_reps_metrics_conv['repeat'].loc[best_id]
+            best_metrics_conv = these_reps_metrics_conv[these_reps_metrics_conv['repeat']==best_repeat]
+            best_metrics_sw = these_reps_metrics_sw[these_reps_metrics_sw['repeat']==best_repeat]
+            if compact>1: best_dist_sw = these_reps_dist_sw[these_reps_dist_sw['repeat']==best_repeat]
+            if compact>0: best_dist_conv = these_reps_dist_conv[these_reps_dist_conv['repeat']==best_repeat]
                 
             # store in best fits dataframe 
-            metrics_stepwise = metrics_stepwise.append(best_metrics_stepwise)
-            if compact>1:
-                distributions_stepwise = distributions_stepwise.append(best_distributions_stepwise)
-            metrics_converged = metrics_converged.append(best_metrics_converged)
-            if compact>0:
-                distributions_converged = distributions_converged.append(best_distributions_converged)
+            metrics_sw = metrics_sw.append(best_metrics_sw, ignore_index = True)
+            metrics_conv = metrics_conv.append(best_metrics_conv, ignore_index = True)
+            if compact>1: dist_sw = dist_sw.append(best_dist_sw, ignore_index = True)
+            if compact>0: dist_conv = dist_conv.append(best_dist_conv, ignore_index = True)
                 
             # store best fits across beta for this set of parameters
-            best_metrics_converged_unclamped = best_metrics_converged[best_metrics_converged['clamp']==False]
-            these_betas_metrics_converged = these_betas_metrics_converged.append(\
-                    best_metrics_converged_unclamped[['ht','ixt','iyt','hx','ixy','Tmax','beta','conv_condition']])
+            these_betas_metrics_conv = these_betas_metrics_conv.append(best_metrics_conv[best_metrics_conv['clamp']==False], ignore_index = True)
                     
             # advance
-            betas = np.delete(betas,0) # toss out the beta used
             fit_count += this_repeats
             fit_time = time.time()-fit_start_time
             
             # refine beta if needed
-            if betas.size==0 and this_beta_search:
-                betas = refine_beta(these_betas_metrics_converged,verbose)
+            if len(betas)==0 and this_beta_search:
+                betas = refine_beta(these_betas_metrics_conv,verbose)
+                betas.reverse()
                 
         if verbose>0:
-            if fit_count>=this_max_fits:
-                print('Stopped beta refinement because ran over max fit count of %i' % this_max_fits)
-            if fit_time>=this_max_time:
-                print('Stopped beta refinement because ran over max fit time of %i seconds' % this_max_time)
-            if betas.size==0:
-                print('Beta refinement complete.')
+            if fit_count>=this_max_fits: print('Stopped beta refinement because ran over max fit count of %i' % this_max_fits)
+            if fit_time>=this_max_time: print('Stopped beta refinement because ran over max fit time of %i seconds' % this_max_time)
+            if len(betas)==0: print('Beta refinement complete.')
 
     # end iteration over fit parameters
-    if compact>1:
-        return metrics_stepwise, distributions_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps, distributions_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps
-    elif compact>0:
-        return metrics_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps
-    else:
-        return metrics_stepwise,\
-               metrics_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps
+    if compact<=1: dist_sw, dist_sw_allreps = None, None
+    if compact==0: dist_conv, dist_conv_allreps = None, None
+    return metrics_sw, dist_sw, metrics_conv, dist_conv,\
+           metrics_sw_allreps, dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps
 
-def clamp_IB(metrics_converged,distributions_converged,pxy,verbose=1):
+def clamp_IB(metrics_conv,dist_conv,pxy,verbose=1):
     """Function to 'clamp' IB fits after the fact; IB also has functionality
-        for doing this during normal fitting; see above."""
+        for doing this during normal fitting; see above. Assumes all fits in
+        input are unclamped."""
     
-    metrics_converged['clamp'] = False
-    distributions_converged['clamp'] = False
+    metrics_conv['clamp'] = False
+    dist_conv['clamp'] = False
     
     # process pxy
     pxy, px, py_x, hx, hy, hy_x, ixy, X, Y, zx, zy = process_pxy(pxy,verbose)
     
     # init data structure of clamped results
-    these_metrics_converged = pd.DataFrame(columns=[
-                            'L','ixt','iyt','ht','T','ht_x','hy_t',
-                            'conv_time','conv_steps','hx','ixy','Tmax','beta',
-                            'alpha','p0','ctol_abs','ctol_rel','ptol','conv_condition','clamp'])
-    these_distributions_converged = pd.DataFrame(columns=[
-                            'qt_x','qt','qy_t','Tmax','beta',
-                            'alpha','p0','ctol_abs','ctol_rel','ptol','conv_condition','clamp'])
-    num_added = 0
+    these_metrics_conv = pd.DataFrame(columns=list(metrics_conv.columns.values))
+    these_dist_conv = pd.DataFrame(columns=list(dist_conv.columns.values))
     
     # iterate over converged results
-    for irow in range(len(distributions_converged.index)):
+    for irow in range(len(dist_conv.index)):
         
-        alpha = metrics_converged['alpha'].iloc[irow] 
+        alpha = metrics_conv['alpha'].iloc[irow] 
         if alpha>0: # don't clamp DIB fits
         
             start_time = time.time()
-            beta = metrics_converged['beta'].iloc[irow]
-            Tmax = metrics_converged['Tmax'].iloc[irow]
-            p0 = metrics_converged['p0'].iloc[irow]            
-            ctol_abs = metrics_converged['ctol_abs'].iloc[irow]
-            ctol_rel = metrics_converged['ctol_rel'].iloc[irow]
-            ptol = metrics_converged['ptol'].iloc[irow]
-            conv_condition = metrics_converged['conv_condition'].iloc[irow]
-        
+            beta = metrics_conv['beta'].iloc[irow]
+            Tmax = metrics_conv['Tmax'].iloc[irow]
+            p0 = metrics_conv['p0'].iloc[irow]            
+            ctol_abs = metrics_conv['ctol_abs'].iloc[irow]
+            ctol_rel = metrics_conv['ctol_rel'].iloc[irow]
+            ptol = metrics_conv['ptol'].iloc[irow]
+            zeroLtol = metrics_conv['zeroLtol'].iloc[irow]
+            conv_condition = metrics_conv['conv_condition'].iloc[irow]
+
             if verbose>0:
                 print('****************************** Clamping IB fit with following parameters ******************************')
-                if Tmax == math.inf:
-                    print('alpha = %.6f, beta = %.6f, Tmax = inf, p0 = %.6f, ctol_abs = %.6f, ctol_rel = %.6f, ptol = %.6f'\
-                        % (alpha,beta,p0,ctol_abs,ctol_rel,ptol))
+                if Tmax is None:
+                    print('alpha = %.2f, beta = %.1f, Tmax = None, p0 = %.3f, ctol_abs = %.1e, ctol_rel = %.1e, ptol = %.1e, zeroLtol = %.1e'\
+                        % (alpha,beta,p0,ctol_abs,ctol_rel,ptol,zeroLtol))
                 else:
-                    print('alpha = %.6f, beta = %.6f, Tmax = %i, p0 = %.6f, ctol_abs = %.6f, ctol_rel = %.6f, ptol = %.6f'\
-                        % (alpha,beta,Tmax,p0,ctol_abs,ctol_rel,ptol))
+                    print('alpha = %.2f, beta = %.1f, Tmax = %i, p0 = %.3f, ctol_abs = %.1e, ctol_rel = %.1e, ptol = %.1e, zeroLtol = %.1e'\
+                        % (alpha,beta,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol))
                 print('**************************************************************************************************')
 
-            qt_x = distributions_converged['qt_x'].iloc[irow]
+            qt_x = dist_conv['qt_x'].iloc[irow]
             
             # STEP 1: CLAMP Q(T|X)
             for x in range(X):
                 tstar = np.argmax(qt_x[:,x])
                 qt_x[:,x] = 0
-                qt_x[tstar,x] = 1
-                del tstar
-            del x
-            
+                qt_x[tstar,x] = 1            
             # STEP 2: UPDATE Q(T)
-            qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)
-            
+            qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)            
             # STEP 3: UPDATE Q(Y|T)
-            qy_t = qy_t_step(qt_x,qt,px,py_x)
-            
+            qy_t = qy_t_step(qt_x,qt,px,py_x)            
             # calculate and print metrics
-            ht, hy_t, iyt, ht_x, ixt, L = calc_IB_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
+            ht, hy_t, iyt, ht_x, ixt, L = calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
             if verbose>0:
-                old_ixt = metrics_converged['ixt'].iloc[irow]
-                old_ht = metrics_converged['ht'].iloc[irow]
-                old_iyt = metrics_converged['iyt'].iloc[irow]
-                old_L = metrics_converged['L'].iloc[irow]
+                old_ixt = metrics_conv['ixt'].iloc[irow]
+                old_ht = metrics_conv['ht'].iloc[irow]
+                old_iyt = metrics_conv['iyt'].iloc[irow]
+                old_L = metrics_conv['L'].iloc[irow]
                 print('***** unclamped fit *****')
-                print('I(X,T) = %.6f, H(T) = %.6f, H(X) = %.6f, I(Y,T) = %.6f, I(X,Y) = %.6f, L = %.6f' % (old_ixt,old_ht,hx,old_iyt,ixy,old_L))
+                print('I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (old_ixt,old_ht,hx,old_iyt,ixy,old_L))
                 print('***** clamped fit *****')
-                print('I(X,T) = %.6f, H(T) = %.6f, H(X) = %.6f, I(Y,T) = %.6f, I(X,Y) = %.6f, L = %.6f' % (ixt,ht,hx,iyt,ixy,L))
+                print('I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (ixt,ht,hx,iyt,ixy,L))
                 
             # store everything
             this_step_time = time.time()-start_time
-            Nsteps = metrics_converged['conv_steps'].iloc[irow]+1
-            conv_time = metrics_converged['conv_time'].iloc[irow]+this_step_time
-            this_metrics_converged = pd.DataFrame(data={
-                            'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht,
-                            'T': T, 'ht_x': ht_x, 'hy_t': hy_t,
-                            'conv_time': conv_time, 'conv_steps': Nsteps,
-                            'hx': hx, 'ixy': ixy, 'Tmax': Tmax,
+            Nsteps = metrics_conv['conv_steps'].iloc[irow]+1
+            conv_time = metrics_conv['conv_time'].iloc[irow]+this_step_time
+            these_metrics_conv = these_metrics_conv.append(pd.DataFrame(data={
+                            'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T,
+                            'ht_x': ht_x, 'hy_t': hy_t, 'hx': hx, 'ixy': ixy, 
+                            'time': conv_time, 'step': Nsteps, 'Tmax': Tmax,
                             'beta': beta, 'alpha': alpha, 'p0': p0,
-                            'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
-                            'ptol': ptol, 'conv_condition': conv_condition,
-                            'clamp': True},
-                            index=[num_added])
-            this_distributions_converged = pd.DataFrame(data={
+                            'zeroLtol': zeroLtol, 'ctol_abs': ctol_abs,
+                            'ctol_rel': ctol_rel, 'ptol': ptol,
+                            'conv_condition': conv_condition, 'clamp': True},
+                            index=[0]),ignore_index = True)
+            these_dist_conv = these_dist_conv.append(pd.DataFrame(data={
                             'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],
                             'Tmax': Tmax, 'beta': beta, 'alpha': alpha,
                             'p0': p0, 'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
-                            'ptol': ptol, 'conv_condition': conv_condition, 
-                            'clamp': True},
-                            index=[num_added])
-            num_added += 1
-            these_metrics_converged = these_metrics_converged.append(this_metrics_converged)
-            these_distributions_converged = these_distributions_converged.append(this_distributions_converged)
+                            'ptol': ptol, 'zeroLtol': zeroLtol,
+                            'time': conv_time, 'step': Nsteps,
+                            'conv_condition': conv_condition,  'clamp': True},
+                            index=[0]),ignore_index = True)
+            
+    metrics_conv = metrics_conv.append(these_metrics_conv, ignore_index = True)
+    dist_conv = dist_conv.append(these_dist_conv, ignore_index = True)
     
-    # reindex clamped fits
-    num_there = max(metrics_converged.index)
-    these_metrics_converged.index = np.arange(num_there+1,num_there+num_added+1)
-    these_distributions_converged.index = np.arange(num_there+1,num_there+num_added+1)
-    metrics_converged = metrics_converged.append(these_metrics_converged)
-    distributions_converged = distributions_converged.append(these_distributions_converged)
-    
-    return metrics_converged, distributions_converged
+    return metrics_conv, dist_conv

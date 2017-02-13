@@ -3,40 +3,13 @@ from data_generation import *
 import os
 
 def test_IB(pxy,compact=1):   
-  
+    """Just runs IB and DIB with default parameters."""
     # set up fit param
     fit_param = pd.DataFrame(data={'alpha': [0.,1.]})
+    fit_param['repeats'] = 2
     
     # do IB
-    if compact>1:
-        metrics_stepwise, distributions_stepwise,\
-           metrics_converged, distributions_converged,\
-           metrics_stepwise_allreps, distributions_stepwise_allreps,\
-           metrics_converged_allreps, distributions_converged_allreps  = IB(pxy,fit_param,compact)
-        #metrics_converged, distributions_converged = clamp_IB(metrics_converged,distributions_converged,pxy)
-        return metrics_stepwise, distributions_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps, distributions_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps
-    elif compact>0:
-        metrics_stepwise,\
-           metrics_converged, distributions_converged,\
-           metrics_stepwise_allreps,\
-           metrics_converged_allreps, distributions_converged_allreps  = IB(pxy,fit_param,compact)
-        #metrics_converged, distributions_converged = clamp_IB(metrics_converged,distributions_converged,pxy)
-        return metrics_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps
-    else:
-        metrics_stepwise,\
-           metrics_converged,\
-           metrics_stepwise_allreps,\
-           metrics_converged_allreps  = IB(pxy,fit_param,compact)
-        return metrics_stepwise,\
-               metrics_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps
+    return IB(pxy,fit_param,compact)
                
 def best_beta(pxy,compact=1):   
     """just uses beta=.6*H(X)/I(X,Y) as attempt to hit knee of IB curve"""
@@ -47,33 +20,7 @@ def best_beta(pxy,compact=1):
     fit_param['beta_search'] = False
     
     # do IB
-    if compact>1:
-        metrics_stepwise, distributions_stepwise,\
-           metrics_converged, distributions_converged,\
-           metrics_stepwise_allreps, distributions_stepwise_allreps,\
-           metrics_converged_allreps, distributions_converged_allreps  = IB(pxy,fit_param,compact)
-        return metrics_stepwise, distributions_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps, distributions_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps
-    elif compact>0:
-        metrics_stepwise,\
-           metrics_converged, distributions_converged,\
-           metrics_stepwise_allreps,\
-           metrics_converged_allreps, distributions_converged_allreps  = IB(pxy,fit_param,compact)
-        return metrics_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps
-    else:
-        metrics_stepwise,\
-           metrics_converged,\
-           metrics_stepwise_allreps,\
-           metrics_converged_allreps  = IB(pxy,fit_param,compact)
-        return metrics_stepwise,\
-               metrics_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps
+    return IB(pxy,fit_param,compact)
      
 def test_p0_pos(pxy,compact=1): 
     # set up fit param
@@ -84,35 +31,7 @@ def test_p0_pos(pxy,compact=1):
     fit_param = fit_param1.append(fit_param2)
     
     # do IB
-    if compact>1:
-        metrics_stepwise, distributions_stepwise,\
-           metrics_converged, distributions_converged,\
-           metrics_stepwise_allreps, distributions_stepwise_allreps,\
-           metrics_converged_allreps, distributions_converged_allreps  = IB(pxy,fit_param,compact)
-        #metrics_converged, distributions_converged = clamp_IB(metrics_converged,distributions_converged,pxy)
-        return metrics_stepwise, distributions_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps, distributions_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps
-    elif compact>0:
-        metrics_stepwise,\
-           metrics_converged, distributions_converged,\
-           metrics_stepwise_allreps,\
-           metrics_converged_allreps, distributions_converged_allreps  = IB(pxy,fit_param,compact)
-        #metrics_converged, distributions_converged = clamp_IB(metrics_converged,distributions_converged,pxy)
-        return metrics_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps
-    else:
-        metrics_stepwise,\
-           metrics_converged,\
-           metrics_stepwise_allreps,\
-           metrics_converged_allreps  = IB(pxy,fit_param,compact)
-        return metrics_stepwise,\
-               metrics_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps
+    return IB(pxy,fit_param,compact)
                
 def test_p0_neg(pxy,compact=1): 
     # set up fit param
@@ -123,35 +42,7 @@ def test_p0_neg(pxy,compact=1):
     fit_param = fit_param1.append(fit_param2)
     
     # do IB
-    if compact>1:
-        metrics_stepwise, distributions_stepwise,\
-           metrics_converged, distributions_converged,\
-           metrics_stepwise_allreps, distributions_stepwise_allreps,\
-           metrics_converged_allreps, distributions_converged_allreps  = IB(pxy,fit_param,compact)
-        #metrics_converged, distributions_converged = clamp_IB(metrics_converged,distributions_converged,pxy)
-        return metrics_stepwise, distributions_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps, distributions_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps
-    elif compact>0:
-        metrics_stepwise,\
-           metrics_converged, distributions_converged,\
-           metrics_stepwise_allreps,\
-           metrics_converged_allreps, distributions_converged_allreps  = IB(pxy,fit_param,compact)
-        #metrics_converged, distributions_converged = clamp_IB(metrics_converged,distributions_converged,pxy)
-        return metrics_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps
-    else:
-        metrics_stepwise,\
-           metrics_converged,\
-           metrics_stepwise_allreps,\
-           metrics_converged_allreps  = IB(pxy,fit_param,compact)
-        return metrics_stepwise,\
-               metrics_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps
+    return IB(pxy,fit_param,compact)
 
 def test_ctol(pxy,compact=1):
     # set up fit param
@@ -165,35 +56,7 @@ def test_ctol(pxy,compact=1):
     fit_param = fit_param1.append(fit_param2)
     
     # do IB
-    if compact>1:
-        metrics_stepwise, distributions_stepwise,\
-           metrics_converged, distributions_converged,\
-           metrics_stepwise_allreps, distributions_stepwise_allreps,\
-           metrics_converged_allreps, distributions_converged_allreps  = IB(pxy,fit_param,compact)
-        #metrics_converged, distributions_converged = clamp_IB(metrics_converged,distributions_converged,pxy)
-        return metrics_stepwise, distributions_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps, distributions_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps
-    elif compact>0:
-        metrics_stepwise,\
-           metrics_converged, distributions_converged,\
-           metrics_stepwise_allreps,\
-           metrics_converged_allreps, distributions_converged_allreps  = IB(pxy,fit_param,compact)
-        #metrics_converged, distributions_converged = clamp_IB(metrics_converged,distributions_converged,pxy)
-        return metrics_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps
-    else:
-        metrics_stepwise,\
-           metrics_converged,\
-           metrics_stepwise_allreps,\
-           metrics_converged_allreps  = IB(pxy,fit_param,compact)
-        return metrics_stepwise,\
-               metrics_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps
+    return IB(pxy,fit_param,compact)
                
 def test_zeroLtol(pxy,compact=1):
     
@@ -208,35 +71,7 @@ def test_zeroLtol(pxy,compact=1):
     fit_param = fit_param1.append(fit_param2)
     
     # do IB
-    if compact>1:
-        metrics_stepwise, distributions_stepwise,\
-           metrics_converged, distributions_converged,\
-           metrics_stepwise_allreps, distributions_stepwise_allreps,\
-           metrics_converged_allreps, distributions_converged_allreps  = IB(pxy,fit_param,compact)
-        #metrics_converged, distributions_converged = clamp_IB(metrics_converged,distributions_converged,pxy)
-        return metrics_stepwise, distributions_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps, distributions_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps
-    elif compact>0:
-        metrics_stepwise,\
-           metrics_converged, distributions_converged,\
-           metrics_stepwise_allreps,\
-           metrics_converged_allreps, distributions_converged_allreps  = IB(pxy,fit_param,compact)
-        #metrics_converged, distributions_converged = clamp_IB(metrics_converged,distributions_converged,pxy)
-        return metrics_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps
-    else:
-        metrics_stepwise,\
-           metrics_converged,\
-           metrics_stepwise_allreps,\
-           metrics_converged_allreps  = IB(pxy,fit_param,compact)
-        return metrics_stepwise,\
-               metrics_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps
+    return IB(pxy,fit_param,compact)
     
 
 def insert_true_clustering(exp_name,verbose=1):
@@ -271,7 +106,7 @@ def insert_true_clustering(exp_name,verbose=1):
         groups_id = groups
     
     # init dataframe
-    metrics_converged = pd.DataFrame(columns=['T','ht','ht_x','hy_t','ixt','iyt',
+    metrics_conv = pd.DataFrame(columns=['T','ht','ht_x','hy_t','ixt','iyt',
                                               'hx','ixy','alpha',
                                               'ptol','conv_condition'])
     if verbose>0:
@@ -299,7 +134,7 @@ def insert_true_clustering(exp_name,verbose=1):
             print('I(X,T) = %.6f, H(T) = %.6f, H(X) = %.6f, I(Y,T) = %.6f, I(X,Y) = %.6f' % (ixt,ht,hx,iyt,ixy))
                 
         # store everything
-        metrics_converged = metrics_converged.append(pd.DataFrame(data={
+        metrics_conv = metrics_conv.append(pd.DataFrame(data={
                         'ixt': ixt, 'iyt': iyt, 'ht': ht,
                         'T': T, 'ht_x': ht_x, 'hy_t': hy_t,
                         'hx': hx, 'ixy': ixy,
@@ -307,167 +142,119 @@ def insert_true_clustering(exp_name,verbose=1):
                         index=[g]))
     
     # save
-    metrics_converged.to_csv(datapath+'metrics_converged_handpicked.csv')
+    metrics_conv.to_csv(datapath+'metrics_conv_handpicked.csv')
     
     return 0   
     
 def run_experiments(data_set="",compact=2,exp_name="",x=""):
     """x should be a string subset of m/r/ip/in/c/z/gb, compact of 0/1/2."""
     cwd = os.getcwd()
-    results_path = cwd+'/data/geometric/'+exp_name+'_'
-    dataset_path = cwd+'/data/geometric/'+data_set+'_'
+    results_path = cwd+'/data/'+exp_name+'_'
+    dataset_path = cwd+'/data/'+data_set+'_'
     compact = int(compact)
     if "m" in x:
         # make new pxy
-        pxy, Xdata, groups = gen_geometric_pxy()
-        np.save(dataset_path+'Xdata',Xdata)
-        np.save(dataset_path+'groups',groups)
+        pxy = gen_dir_pxy()
+        #np.save(dataset_path+'Xdata',Xdata)
+        #np.save(dataset_path+'groups',groups)
         np.save(dataset_path+'pxy',pxy)
     else:
         # load existing pxy
         pxy = np.load(dataset_path+'pxy.npy')
     if "r" in x: # regular experiments
-        if compact>1:
-            metrics_stepwise, distributions_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps, distributions_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps = test_IB(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise.csv')
-            distributions_converged.to_pickle(results_path+'distributions_converged.pkl')
+        metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
+            dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
+            test_IB(pxy,compact)
+        if compact>1:           
+            metrics_conv.to_csv(results_path+'metrics_conv.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw.csv')
+            dist_conv.to_pickle(results_path+'dist_conv.pkl')
+            dist_sw.to_pickle(results_path+'dist_sw.pkl')
         elif compact>0:
-            metrics_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps = test_IB(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise.csv')
-            distributions_converged.to_pickle(results_path+'distributions_converged.pkl')
+            metrics_conv.to_csv(results_path+'metrics_conv.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw.csv')
+            dist_conv.to_pickle(results_path+'dist_conv.pkl')
         else:
-            metrics_stepwise,\
-               metrics_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps = test_IB(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise.csv')
+            metrics_conv.to_csv(results_path+'metrics_conv.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw.csv')
     if "ip" in x: # initialization experiments - positive p0
+        metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
+            dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
+            test_p0_pos(pxy,compact)
         if compact>1:
-            metrics_stepwise, distributions_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps, distributions_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps = test_p0_pos(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged_p0_pos.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise_p0_pos.csv')
-            distributions_converged.to_pickle(results_path+'distributions_converged_p0_pos.pkl')
+            metrics_conv.to_csv(results_path+'metrics_conv_p0_pos.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw_p0_pos.csv')
+            dist_conv.to_pickle(results_path+'dist_conv_p0_pos.pkl')
+            dist_sw.to_pickle(results_path+'dist_sw_p0_pos.pkl')
         elif compact>0:
-            metrics_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps = test_p0_pos(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged_p0_pos.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise_p0_pos.csv')
-            distributions_converged.to_pickle(results_path+'distributions_converged_p0_pos.pkl')
+            metrics_conv.to_csv(results_path+'metrics_conv_p0_pos.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw_p0_pos.csv')
+            dist_conv.to_pickle(results_path+'dist_conv_p0_pos.pkl')
         else:
-            metrics_stepwise,\
-               metrics_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps = test_p0_pos(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged_p0_pos.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise_p0_pos.csv')
+            metrics_conv.to_csv(results_path+'metrics_conv_p0_pos.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw_p0_pos.csv')
     if "in" in x: # initialization experiments - negative p0
+        metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
+            dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
+            test_p0_neg(pxy,compact)
         if compact>1:
-            metrics_stepwise, distributions_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps, distributions_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps = test_p0_neg(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged_p0_neg.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise_p0_neg.csv')
-            distributions_converged.to_pickle(results_path+'distributions_converged_p0_neg.pkl')
+            metrics_conv.to_csv(results_path+'metrics_conv_p0_neg.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw_p0_neg.csv')
+            dist_conv.to_pickle(results_path+'dist_conv_p0_neg.pkl')
+            dist_sw.to_pickle(results_path+'dist_sw_p0_neg.pkl')
         elif compact>0:
-            metrics_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps = test_p0_neg(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged_p0_neg.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise_p0_neg.csv')
-            distributions_converged.to_pickle(results_path+'distributions_converged_p0_neg.pkl')
+            metrics_conv.to_csv(results_path+'metrics_conv_p0_neg.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw_p0_neg.csv')
+            dist_conv.to_pickle(results_path+'dist_conv_p0_neg.pkl')
         else:
-            metrics_stepwise,\
-               metrics_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps = test_p0_neg(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged_p0_neg.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise_p0_neg.csv')
+            metrics_conv.to_csv(results_path+'metrics_conv_p0_neg.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw_p0_neg.csv')
     if "c" in x: # convergence tolerance experiments
+        metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
+            dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
+            test_ctol(pxy,compact)
         if compact>1:
-            metrics_stepwise, distributions_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps, distributions_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps = test_ctol(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged_ctol.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise_ctol.csv')
-            distributions_converged.to_pickle(results_path+'distributions_converged_ctol.pkl')
+            metrics_conv.to_csv(results_path+'metrics_conv_ctol.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw_ctol.csv')
+            dist_conv.to_pickle(results_path+'dist_conv_ctol.pkl')
+            dist_sw.to_pickle(results_path+'dist_sw_ctol.pkl')
         elif compact>0:
-            metrics_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps = test_ctol(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged_ctol.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise_ctol.csv')
-            distributions_converged.to_pickle(results_path+'distributions_converged_ctol.pkl')
+            metrics_conv.to_csv(results_path+'metrics_conv_ctol.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw_ctol.csv')
+            dist_conv.to_pickle(results_path+'dist_conv_ctol.pkl')
         else:
-            metrics_stepwise,\
-               metrics_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps = test_ctol(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged_ctol.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise_ctol.csv')
+            metrics_conv.to_csv(results_path+'metrics_conv_ctol.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw_ctol.csv')
     if "z" in x: # zeroL tolerance experiments
+        metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
+            dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
+            test_zeroLtol(pxy,compact)
         if compact>1:
-            metrics_stepwise, distributions_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps, distributions_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps = test_zeroLtol(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged_zeroLtol.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise_zeroLtol.csv')
-            distributions_converged.to_pickle(results_path+'distributions_converged_zeroLtol.pkl')
+            metrics_conv.to_csv(results_path+'metrics_conv_zeroLtol.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw_zeroLtol.csv')
+            dist_conv.to_pickle(results_path+'dist_conv_zeroLtol.pkl')
+            dist_sw.to_pickle(results_path+'dist_sw_zeroLtol.pkl')
         elif compact>0:
-            metrics_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps = test_zeroLtol(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged_zeroLtol.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise_zeroLtol.csv')
-            distributions_converged.to_pickle(results_path+'distributions_converged_zeroLtol.pkl')
+            metrics_conv.to_csv(results_path+'metrics_conv_zeroLtol.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw_zeroLtol.csv')
+            dist_conv.to_pickle(results_path+'dist_conv_zeroLtol.pkl')
         else:
-            metrics_stepwise,\
-               metrics_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps = test_zeroLtol(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged_zeroLtol.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise_zeroLtol.csv')
+            metrics_conv.to_csv(results_path+'metrics_conv_zeroLtol.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw_zeroLtol.csv')
     if "b" in x: # trying proposed optimal beta
+        metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
+            dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
+            best_beta(pxy,compact)
         if compact>1:
-            metrics_stepwise, distributions_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps, distributions_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps = best_beta(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged_bestbeta.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise_bestbeta.csv')
-            distributions_converged.to_pickle(results_path+'distributions_converged_bestbeta.pkl')
+            metrics_conv.to_csv(results_path+'metrics_conv_bestbeta.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw_bestbeta.csv')
+            dist_conv.to_pickle(results_path+'dist_conv_bestbeta.pkl')
+            dist_sw.to_pickle(results_path+'dist_sw_bestbeta.pkl')
         elif compact>0:
-            metrics_stepwise,\
-               metrics_converged, distributions_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps, distributions_converged_allreps = best_beta(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged_bestbeta.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise_bestbeta.csv')
-            distributions_converged.to_pickle(results_path+'distributions_converged_bestbeta.pkl')
+            metrics_conv.to_csv(results_path+'metrics_conv_bestbeta.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw_bestbeta.csv')
+            dist_conv.to_pickle(results_path+'dist_conv_bestbeta.pkl')
         else:
-            metrics_stepwise,\
-               metrics_converged,\
-               metrics_stepwise_allreps,\
-               metrics_converged_allreps = best_beta(pxy,compact)
-            metrics_converged.to_csv(results_path+'metrics_converged_bestbeta.csv')
-            metrics_stepwise.to_csv(results_path+'metrics_stepwise_bestbeta.csv')
+            metrics_conv.to_csv(results_path+'metrics_conv_bestbeta.csv')
+            metrics_sw.to_csv(results_path+'metrics_sw_bestbeta.csv')
     return 0

@@ -4,8 +4,8 @@ import os
 
 def gen_dir_pxy():
     # param
-    X = 2048
-    Y = 256
+    X = 128
+    Y = 16
     cx = 1000.
     cys = np.logspace(-2.,1.,num=X,base=10)
     # build pxy
