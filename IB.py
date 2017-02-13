@@ -278,7 +278,7 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=.75,ctol_abs=10**-3,ctol_rel=0.,
     Note: fixed distributions denoted by p; optimized ones by q.
     
     INPUTS
-    *** see IB function documentation below ***
+    *** see IB.py function documentation below ***
     
     OUTPUTS
     metrics_sw = dataframe of scalar metrics for each fit step:
@@ -559,7 +559,7 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=.75,ctol_abs=10**-3,ctol_rel=0.,
     return metrics_sw, dist_sw, metrics_conv, dist_conv
             
 def refine_beta(metrics_conv,verbose=2):
-    """Helper function for IB to refine beta parameter."""
+    """Helper function for IB to automate search over parameter beta."""
     
     # parameters governing insertion of betas, or when there is a transition to NaNs (due to under/overflow)
     l = 1 # number of betas to insert into gaps
@@ -659,17 +659,28 @@ def IB(pxy,fit_param,compact=1,verbose=2):
     """Performs many generalized IB fits to a single p(x,y).
     
     One fit is performed for each row of input dataframe fit_param. Columns
-    correspond to parameters of IB_single. See definition of IB_single for
-    more details.
+    correspond to fit parameters.
     
-    REQUIRED INPUTS
-    pxy - p(x,y) [=] X x Y
-    fit_param = pandas df, with each row specifying a single IB fit; columns inc:
-        alpha = IB parameter [=] pos scalar (required)
-        beta = vector of IB parameters [=] vector of pos scalars
+    INPUTS
+    pxy = input distribution p(x,y) [=] X x Y
+    fit_param = pandas df, with each row specifying a single round of IB fits,
+            where a "round" means a bunch of fits where the only parameter that
+            varies from fit to fit is beta; columns include:
+        **** required ****
+        alpha = IB parameter interpolating between IB and DIB [=] pos scalar (required)
+        **** optional (have defaults) ****
+        *** parameters not passed directly to IB_single (defaults set below) ***
+        betas = list of initial beta values to run, where beta is an IB parameter
+            specifying the "coarse-grainedness" of the solution [=] list of pos scalars
         beta_search = flag indicating whether to perform automatic beta search
-            or use only initial beta(s) [=] boolean
-        Tmax = max cardinality of T / max # of clusters [=] pos integer
+            or use *only* initial beta(s) [=] boolean
+        max_fits = max number of beta fits allowed for each input row [=] pos integer
+        max_time = max time (in seconds) allowed for fitting of each input row [=] pos scalar
+        repeats = repeated fits per beta / row, after which fit with best value
+            of objective function L is retained [=] pos int
+        *** parameters passed to IB_single (defaults set there) ***    
+        Tmax = max cardinality of T / max # of clusters; if None, defaults
+            to using |X|, which is the most conservative setting [=] pos integer
         p0 = determines initialization of q(t|x) when alpha>0 (i.e. non-DIB fits)
             for pos p0, p0 is prob mass on ~unique cluster for each input x
                 (i.e. q(t_i|x_i)=p0 where t_i is unique for each x_i)
@@ -678,29 +689,59 @@ def IB(pxy,fit_param,compact=1,verbose=2):
             in both cases, the probability over the remaining clusters is set
                 to a normalized uniform random vector (with prob mass 1-p0)
             for p0=0, q(t|x_i) is set to a normalized unirand vec for each x_i
-        ctol_abs = if abs(L_old-L)<ctol_abs, converge [=] non-neg scalar
-        ctol_rel = if abs(L_old-L)/abs(L_old)<ctol_rel, converge [=] non-neg scalar
-        ptol = x,y,t values dropped if prob<ptol [=] non-neg scalar
-        max_fits = max number of beta fits allowed for each input row [=] pos integer
-        max_time = max time (in seconds) allowed for fitting of each input row [=] pos scalar
-        repeats = repeated fits per beta / row, after which best value of L retained [=] pos int
-        zeroLtol = if L>zeroLtol, revert to solution mapping all x to same t (with L=0) [=] non-neg scalar
-        clamp = if true, for all non-DIB fits, insert a clamped version of the solution
-            into the results after convergence [=] boolean
-        geoapprox = if true, uses the approx algorithm derived for geometric data,
-            requires the optional Xdata argument to be passed with data point
-            coordinates in the rows (N x d np array) [=] boolean
-        
-        *** default parameter values below ***
-            
-    OPTIONAL INPUTS
-    verbose = integer indicating verbosity of updates [=] 0/1/2
-    compact = integer indicating how much data to save [=] 0/1/2
-            (0: only save metrics;
+        ctol_abs = absolute convergence tolerance; if L is the objective
+            function, then if abs(L_old-L)<ctol_abs, converge [=] non-neg scalar
+        ctol_rel = relative convergence tolerance; if
+            abs(L_old-L)/abs(L_old)<ctol_rel, converge [=] non-neg scalar
+        ptol = probalitiy tolerance; x,y,t values dropped if prob<ptol [=] non-neg scalar        
+        zeroLtol = if converged solution has L>zeroLtol, revert to solution
+            mapping all x to same t (which has L=0) [=] non-neg scalar
+        clamp = if true, for all non-DIB fits, insert a clamped version of the
+            solution into the results after convergence [=] boolean
+    verbose = integer indicating verbosity of updates [=] {0,1,2}
+             0: only tell me about errors;
+             1: tell me when and why things converge;
+             2: tell me about every step of the algorithm
+    compact = integer indicating how much data to save [=] {0,1,2}
+             0: only save metrics;
              1: also save converged distributions;
-             2: also save stepwise distributions)
-    Xdata = array specifying the data point locations; N rows, each specifiying
-        the d coordinates of that data point [=] N x d np array"""
+             2: also save stepwise distributions
+    
+    OUTPUTS
+    all outputs are pandas dfs. "sw" means stepwise; each row corresponds to a
+    step in the IB algorithm. "conv" means converged; each row corresponds to a
+    converged solution of the IB algorithm. "metrics" has columns corresponding
+    to things like the objective function value L, informations and entropies,
+    and the number of clusters used, while "dist" has columns for the actual
+    distributions being optimizing, such as the encoder q(t|x). thus, dist dfs
+    are much larger than metrics dfs. "allreps" means that all repeats for a
+    set of parameters are included, whereas those dfs without this tag retain
+    only the 'best' fit, that is the one with lowest L.
+    *** columns that all dfs contain ***
+    parameters described above: alpha, beta (single value now; not list), Tmax,
+                                p0, ctol_abs, ctol_rel, ptol, zeroLtol, repeats
+    repeat = id of repeat [=] pos integer in range of 0 to repeats
+    step = index of fit step for 'sw', or number of steps to converge for 'conv'
+        [=] pos int
+    time = time to complete this step for 'sw', or time to converge for 'conv'
+        [=] pos scale (in s)
+    *** columns that only 'conv' dfs contain ***
+    conv_condition
+    clamp
+    *** columns that only 'metrics' dfs contain ***
+    L = objective function value [=] scalar
+    T = number of clusters used [=] pos integer
+    ht = H(T) [=] pos scalar
+    ht_x = H(T|X) [=] pos scalar
+    hy_t = H(Y|T) [=] pos scalar
+    ixt = I(X,T) [=] pos scalar
+    iyt = I(Y,T) [=] pos scalar
+    hx = H(X) [=] pos scalar (fixed property of p(x,y); here for comparison)
+    ixy = I(X,Y) [=] pos scalar (fixed property of p(x,y); here for comparison)
+    *** columns that only 'dist' dfs contain ***
+    qt_x = q(t|x) = [=] T x X (note: size T may change during iterations)
+    qt = q(t) [=] T x 1 (note: size T may change during iterations)
+    qy_t = q(y|t) [=] Y x T (note: size T may change during iterations)"""
     
     # set defaults
     def_betas = [.1,1,2,3,4,5,7,9,10]
@@ -893,8 +934,8 @@ def clamp_IB(metrics_conv,dist_conv,pxy,verbose=1):
                 
             # store everything
             this_step_time = time.time()-start_time
-            Nsteps = metrics_conv['conv_steps'].iloc[irow]+1
-            conv_time = metrics_conv['conv_time'].iloc[irow]+this_step_time
+            Nsteps = metrics_conv['step'].iloc[irow]+1
+            conv_time = metrics_conv['time'].iloc[irow]+this_step_time
             these_metrics_conv = these_metrics_conv.append(pd.DataFrame(data={
                             'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T,
                             'ht_x': ht_x, 'hy_t': hy_t, 'hx': hx, 'ixy': ixy, 
