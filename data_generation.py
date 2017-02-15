@@ -2,6 +2,13 @@ from IB import *
 import matplotlib.pyplot as plt
 import os
 
+def gen_zipf_pxy():
+    X = 150
+    Y = X
+    pxy = np.eye(X)
+    pxy = pxy/np.sum(pxy[:])
+    return pxy
+
 def gen_dir_pxy():
     # param
     X = 128

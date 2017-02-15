@@ -8,7 +8,7 @@ vexp = np.vectorize(math.exp)
 # A word on notation: for probability variables, an underscore here means a
 # conditioning, so read _ as |.
 
-def verify_inputs(pxy,beta,alpha,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,compact,verbose):
+def verify_inputs(pxy,beta,alpha,Tmax,p0,waviness,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,compact,verbose):
     """Helper function for IB which checks for validity of input parameters."""
     if not(isinstance(pxy,np.ndarray)):
         raise ValueError('pxy must be a numpy array')
@@ -22,9 +22,10 @@ def verify_inputs(pxy,beta,alpha,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,c
         raise ValueError('alpha must be a non-negative scalar')
     if Tmax is not None and (not(isinstance(Tmax,int)) or Tmax<1):
         raise ValueError('Tmax must be a positive integer (or None)')
-    if p0<-1 or p0>1 or not(isinstance(p0,(int,float))):
-        print(p0)
+    if p0 is not None and (p0<-1 or p0>1 or not(isinstance(p0,(int,float)))):
         raise ValueError('p0 must be a float/int between -1 and 1')
+    if waviness is not None and (waviness<0 or waviness>1 or not(isinstance(waviness,float))):
+        raise ValueError('waviness must be a float between 0 and 1')
     if not(ctol_abs>=0) or not(isinstance(ctol_abs,float)):
         raise ValueError('ctol_abs must be a non-negative float')        
     if not(ctol_rel>=0) or not(isinstance(ctol_rel,float)):
@@ -173,81 +174,72 @@ def qt_x_step(qt,py_x,qy_t,T,X,alpha,beta,verbose):
             else: qt_x[:,x] = vexp(l/alpha)/np.sum(vexp(l/alpha)) # note: l/alpha<-745 is where underflow creeps in
     return qt_x
     
-def init_qt_x(alpha,X,T,p0):
+def init_qt_x(alpha,X,T,p0,waviness):
     """Initializes q(t|x) for generalized Information Bottleneck.
     
-    For DIB (the alpha=0 case, points are spread as evenly across clusters as
-    possible. For nonzero alpha (including the alpha=1 IB case), the
-    initialization depends on p0. For p0=0, we use a normalized uniform random
-    vector. For p0 positive, points are spread around clusters like DIB, with
-    probability mass p0 placed on the primary cluster, and the other 1-p0 mass
-    assigned to a normalized uniform random vector over the remaining clusters.
-    For p0 negative, we use the same procedure as p0 positive, except that all
-    points have the *same* primary cluster. There is also a variable wavy that
-    can be toggled to use a lower variance initialization over the non-primary
-    clusters.""" 
-    if alpha==0: # DIB: spread points evenly across clusters
-        n = math.ceil(float(X)/float(T)) # approx number points per cluster
-        I = np.repeat(np.arange(0,T),n).astype("int") # data-to-cluster assignment vector
-        np.random.shuffle(I)
-        qt_x = np.zeros((T,X))
-        for i in range(X):
-            qt_x[I[i],i] = 1
-    else: # not DIB
-        if p0==0: # normalized uniform random vector
+    For p0 = 0: init is random noise. If waviness = None, normalized uniform
+    random vector. Otherwise, uniform over clusters +- uniform noise of
+    magnitude waviness.
+    
+    For p0 positive: attempt to spread points as evenly across clusters as
+    possible. Prob mass p0 is given to the "assigned" clusters, and the
+    remaining 1-p0 prob mass is randomly assigned. If waviness = None, again
+    use a normalized random vector to assign the remaining mass. Otherwise,
+    uniform +- waviness again.
+    
+    For p0 negative: just as above, except that all data points are "assigned"
+    to the same cluster (well, at least |p0| of their prob mass).""" 
+    if p0==0: # don't insert any peaks; init is all "noise"
+        if waviness: # flat + wavy style noise
+            qt_x = np.ones((T,X))+2*(np.random.rand(T,X)-.5)*waviness # 1+-waviness%                
+            for i in range(X):
+                qt_x[:,i] = qt_x[:,i]/np.sum(qt_x[:,i]) # normalize
+        else: # uniform random vector
             qt_x = np.random.rand(T,X)
             qt_x = np.multiply(qt_x,np.tile(1./np.sum(qt_x,axis=0),(T,1))) # renormalize
-        # others are spike plus wavy: if pos, spread peaks around like DIB init;
-                                    # if neg, put all peaks on same cluster
-        elif p0>0: # noisy approx to DIB init
-            wavy = False
-            if wavy:
-                # insert wavy noise part
-                f = .25; # max percent variation of flat part of dist around mean           
-                qt_x = np.ones((T,X))+2*(np.random.rand(T,X)-.5)*f # 1+-f%
-                # choose clusters for each x to get spikes
-                n = math.ceil(float(X)/float(T)) # approx number points per cluster
-                I = np.repeat(np.arange(0,T),n).astype("int") # data-to-cluster assignment vector
-                np.random.shuffle(I)
-                for i in range(X):
-                    qt_x[I[i],i] = 0 # zero out that cluster
-                    qt_x[:,i] = (1-p0)*qt_x[:,i]/np.sum(qt_x[:,i]) # normalize others to 1-p0
-                    qt_x[I[i],i] = p0 # insert p0 spike
-            else: # uniform random vector instead of wavy
-                qt_x = np.zeros((T,X))
-                # choose clusters for each x to get spikes
-                n = math.ceil(float(X)/float(T)) # approx number points per cluster
-                I = np.repeat(np.arange(0,T),n).astype("int") # data-to-cluster assignment vector
-                np.random.shuffle(I)
-                for i in range(X):
-                    u = np.random.rand(T)
-                    u[I[i]] = 0
-                    u = (1-p0)*u/np.sum(u)
-                    u[I[i]] = p0
-                    qt_x[:,i] = u
-        else: # same as above, but all x assigned same cluster for spike
-            wavy = False
-            if wavy:
-                p0 = -p0
-                # p0 = prob on spike, mean prob elsewhere = (1-p0)/(T-1)
-                f = .25; # max percent variation of flat part of dist around mean           
-                qt_x = np.ones((T,X))+2*(np.random.rand(T,X)-.5)*f # 1+-f%
-                t = np.random.randint(T) # pick cluster to get delta spike
-                qt_x[t,:] = np.zeros((1,X)) # zero out that cluster
-                qt_x = np.multiply(qt_x,np.tile(1./np.sum(qt_x,axis=0),(T,1))) # normalize the rest...
-                qt_x = (1-p0)*qt_x # ...to 1-p0
-                qt_x[t,:] = p0*np.ones((1,X)) # put in delta spike
-            else: # uniform random vector instead of wavy
-                p0 = -p0
-                qt_x = np.zeros((T,X))
-                # choose clusters for each x to get spikes
-                t = np.random.randint(T) # pick cluster to get delta spike
-                for i in range(X):
-                    u = np.random.rand(T)
-                    u[t] = 0
-                    u = (1-p0)*u/np.sum(u)
-                    u[t] = p0
-                    qt_x[:,i] = u                
+    elif p0>0: # spread points evenly across clusters; "assigned" clusters for each data point get prob mass p0
+        if waviness:
+            # insert wavy noise part          
+            qt_x = np.ones((T,X))+2*(np.random.rand(T,X)-.5)*waviness # 1+-waviness%                
+            # choose clusters for each x to get spikes
+            n = math.ceil(float(X)/float(T)) # approx number points per cluster
+            I = np.repeat(np.arange(0,T),n).astype("int") # data-to-cluster assignment vector
+            np.random.shuffle(I)
+            for i in range(X):
+                qt_x[I[i],i] = 0 # zero out that cluster
+                qt_x[:,i] = (1-p0)*qt_x[:,i]/np.sum(qt_x[:,i]) # normalize others to 1-p0
+                qt_x[I[i],i] = p0 # insert p0 spike
+        else: # uniform random vector instead of wavy
+            qt_x = np.zeros((T,X))
+            # choose clusters for each x to get spikes
+            n = math.ceil(float(X)/float(T)) # approx number points per cluster
+            I = np.repeat(np.arange(0,T),n).astype("int") # data-to-cluster assignment vector
+            np.random.shuffle(I)
+            for i in range(X):
+                u = np.random.rand(T)
+                u[I[i]] = 0
+                u = (1-p0)*u/np.sum(u)
+                u[I[i]] = p0
+                qt_x[:,i] = u
+    else: # put all points in the same cluster; primary cluster gets prob mass |p0|
+        p0 = -p0
+        if waviness:      
+            qt_x = np.ones((T,X))+2*(np.random.rand(T,X)-.5)*waviness # 1+-waviness%
+            t = np.random.randint(T) # pick cluster to get delta spike
+            qt_x[t,:] = np.zeros((1,X)) # zero out that cluster
+            qt_x = np.multiply(qt_x,np.tile(1./np.sum(qt_x,axis=0),(T,1))) # normalize the rest...
+            qt_x = (1-p0)*qt_x # ...to 1-p0
+            qt_x[t,:] = p0*np.ones((1,X)) # put in delta spike
+        else: # uniform random vector instead of wavy
+            qt_x = np.zeros((T,X))
+            # choose clusters for each x to get spikes
+            t = np.random.randint(T) # pick cluster to get delta spike
+            for i in range(X):
+                u = np.random.rand(T)
+                u[t] = 0
+                u = (1-p0)*u/np.sum(u)
+                u[t] = p0
+                qt_x[:,i] = u                
     return qt_x
     
 def calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta):
@@ -271,65 +263,28 @@ def store_sw_dist(dist_sw,qt_x,qt,qy_t,step):
                 'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],'step': step},
                 index = [0]), ignore_index = True)
     
-def IB_single(pxy,beta,alpha,Tmax=None,p0=.75,ctol_abs=10**-3,ctol_rel=0.,
+def metrics_string(ixt,ht,hx,iyt,ixy,L):
+    return 'I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (ixt,ht,hx,iyt,ixy,L)
+    
+def IB_single(pxy,beta,alpha,Tmax=None,p0=None,waviness=None,ctol_abs=10**-3,ctol_rel=0.,
               ptol=10**-8,zeroLtol=1,clamp=True,compact=1,verbose=2):
-    """Performs the generalized Information Bottleneck on the joint p(x,y).
+    """Performs a single fit of the generalized Information Bottleneck on the
+    joint distribution p(x,y) for a given beta and alpha.
     
-    Note: fixed distributions denoted by p; optimized ones by q.
-    
-    INPUTS
-    *** see IB.py function documentation below ***
-    
-    OUTPUTS
-    metrics_sw = dataframe of scalar metrics for each fit step:
-        L = objective function value [=] scalar
-        ixt = I(X,T) [=] scalar
-        iyt = I(Y,T) [=] scalar
-        ht = H(T) [=] scalar
-        T = number of clusters used [=] pos integer
-        ht_x = H(T|X) [=] scalar
-        hy_t = H(Y|T) [=] scalar
-        hx = H(X) [=] scalar
-        ixy = I(X,Y) [=] scalar
-        step = index of fit step [=] pos integer
-        step_time = time to complete this step (in s) [=] pos scalar
-        hx = H(X) [=] scalar
-        ixy = I(X,Y) [=] scalar
-        Tmax
-        beta
-        alpha
-        p0
-        ctol
-        ptol
-    dist_sw = dataframe of optimized distributions for each step:
-        qt_x = q(t|x) = [=] T x X (note: size T changes during iterations)
-        qt = q(t) [=] T x 1 (note: size T changes during iterations)
-        qy_t = q(y|t) [=] Y x T (note: size T changes during iterations)
-        step = index of fit step [=] pos integer 
-        Tmax
-        beta
-        alpha
-        p0
-        ctol
-        ptol
-    metrics_conv = dataframe of last (converged) step for each Tmax/fit above:
-        step_time -> conv_time = time to run all steps (in s)
-        step -> conv_steps = number of steps to converge
-        conv_condition = string indicating reason for convergence [=] {cost_func_inc,small_changes,single_cluster,cost_func_NaN}
-    dist_conv = dataframe of last (converged) step for each Tmax/fit above:
-        step_time -> conv_time = time to run all steps (in s)
-        step -> conv_steps = number of steps to converge
-        conv_condition = string indicating reason for convergence"""
+    See IB.py function documentation below for more details."""
         
     # PRE-IB STEP INIT AND PROCESSING
         
-    verify_inputs(pxy,beta,alpha,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,compact,verbose)
+    verify_inputs(pxy,beta,alpha,Tmax,p0,waviness,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,compact,verbose)
     
     conv_thresh = 1 # steps in a row of small change to consider converged
     
     # process inputs
     if isinstance(alpha,int): alpha = float(alpha)
-    if isinstance(beta,int): beta = float(beta)        
+    if isinstance(beta,int): beta = float(beta)
+    if p0 is None:
+        if alpha==0: p0 = 1. # DIB default: deterministic init that spreads points evenly across clusters
+        else: p0 = .75 # non-DIB default: DIB-like init but with only 75% prob mass on "assigned" cluster           
     pxy, px, py_x, hx, hy, hy_x, ixy, X, Y, zx, zy = process_pxy(pxy,verbose)
     if Tmax is None:
         Tmax = X
@@ -341,14 +296,16 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=.75,ctol_abs=10**-3,ctol_rel=0.,
         
     # report
     if verbose>0:
-        print('********************************************** Beginning IB fit with the following parameters **********************************************')
-        if Tmax is None:
-            print('alpha = %.2f, beta = %.1f, Tmax = None, p0 = %.3f, ctol_abs = %.1e, ctol_rel = %.1e, ptol = %.1e, zeroLtol = %.1e, clamp = %s' %\
-                  (alpha, beta, p0, ctol_abs, ctol_rel, ptol, zeroLtol, clamp))
-        else:
-            print('alpha = %.2f, beta = %.1f, Tmax = %i, p0 = %.3f, ctol_abs = %.1e, ctol_rel = %.1e, ptol = %.1e, zeroLtol = %.1e, clamp = %s' %\
-                  (alpha, beta, Tmax, p0, ctol_abs, ctol_rel, ptol, zeroLtol, clamp))
-        print('********************************************************************************************************************************************')
+        print('****************************************************** Beginning IB fit with the following parameters ******************************************************')
+        if Tmax is None: Tmax_str = 'None'
+        else: Tmax_str = '%i' % Tmax
+        if p0 is None: p0_str = 'None'
+        else: p0_str = '%.3f' % p0
+        if waviness is None: waviness_str = 'None'
+        else: waviness_str = '%.2f' % waviness
+        print('alpha = %.2f, beta = %.1f, Tmax = %s, p0 = %s, waviness = %s, ctol_abs = %.1e, ctol_rel = %.1e, ptol = %.1e, zeroLtol = %.1e, clamp = %s' %\
+              (alpha, beta, Tmax_str, p0_str, waviness_str, ctol_abs, ctol_rel, ptol, zeroLtol, clamp))
+        print('************************************************************************************************************************************************************')
                         
     # initialize dataframes
     metrics_sw = pd.DataFrame(columns=['L','ixt','iyt','ht','T','ht_x','hy_t','step','time'])
@@ -361,14 +318,14 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=.75,ctol_abs=10**-3,ctol_rel=0.,
     step_start_time = time.time()
     # STEP 0: INITIALIZE
     # initialize q(t|x)
-    qt_x = init_qt_x(alpha,X,T,p0)
+    qt_x = init_qt_x(alpha,X,T,p0,waviness)
     # initialize q(t) given q(t|x)
     qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)
     # initialize q(y|t) given q(t|x) and q(t)
     qy_t = qy_t_step(qt_x,qt,px,py_x)
     # calculate and print metrics
     ht, hy_t, iyt, ht_x, ixt, L = calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
-    if verbose==2: print('init: I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (ixt,ht,hx,iyt,ixy,L))
+    if verbose==2: print('init: ' + metrics_string(ixt,ht,hx,iyt,ixy,L))
     step_time = time.time() - step_start_time
     metrics_sw = store_sw_metrics(metrics_sw,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,step=0)
     if compact>1: dist_sw = store_sw_dist(dist_sw,qt_x,qt,qy_t,step=0)
@@ -394,7 +351,7 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=.75,ctol_abs=10**-3,ctol_rel=0.,
         qy_t = qy_t_step(qt_x,qt,px,py_x)
         # calculate and print metrics
         ht, hy_t, iyt, ht_x, ixt, L = calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
-        if verbose==2: print('step %i: I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (Nsteps,ixt,ht,hx,iyt,ixy,L))
+        if verbose==2: print('step %i: ' % Nsteps + metrics_string(ixt,ht,hx,iyt,ixy,L))
         # check for convergence
         L_abs_inc_flag = L>(L_old+ctol_abs)
         L_rel_inc_flag = L>(L_old+(abs(L_old)*ctol_rel))
@@ -452,7 +409,7 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=.75,ctol_abs=10**-3,ctol_rel=0.,
     # end iterative IB steps
     
     # report
-    if verbose>0: print('converged in %i step(s) to: I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (Nsteps,ixt,ht,hx,iyt,ixy,L))
+    if verbose>0: print('converged in %i step(s) to: ' % Nsteps + metrics_string(ixt,ht,hx,iyt,ixy,L))
             
     # replace converged step with single-cluster map if better
     if T>1:
@@ -474,7 +431,7 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=.75,ctol_abs=10**-3,ctol_rel=0.,
             if compact>1: dist_sw = store_sw_dist(dist_sw,qt_x,qt,qy_t,Nsteps+1)
             L_old, ixt_old, iyt_old, ht_old, T_old, ht_x_old, hy_t_old, qt_x_old, qt_old, qy_t_old =\
             L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t
-            if verbose>0: print('single-cluster solution: I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (ixt,ht,hx,iyt,ixy,L))            
+            if verbose>0: print('single-cluster solution: ' + metrics_string(ixt,ht,hx,iyt,ixy,L))            
         elif verbose>0: print("Single-cluster mapping not better; changes L from %.4f to %.4f (zeroLtol = %.1e)." % (L,sL,zeroLtol))
     # end single-cluster check
     
@@ -484,7 +441,7 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=.75,ctol_abs=10**-3,ctol_rel=0.,
                         'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T,
                         'ht_x': ht_x, 'hy_t': hy_t, 'hx': hx, 'ixy': ixy,
                         'time': conv_time, 'step': Nsteps, 'Tmax': Tmax,
-                        'beta': beta, 'alpha': alpha, 'p0': p0,
+                        'beta': beta, 'alpha': alpha, 'p0': p0, 'waviness': waviness,
                         'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
                         'ptol': ptol, 'zeroLtol': zeroLtol,
                         'conv_condition': conv_condition, 'clamp': False},
@@ -492,8 +449,8 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=.75,ctol_abs=10**-3,ctol_rel=0.,
     if compact>0: dist_conv = pd.DataFrame(data={
                         'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],
                         'Tmax': Tmax, 'beta': beta, 'alpha': alpha,
-                        'p0': p0, 'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
-                        'ptol': ptol, 'zeroLtol': zeroLtol,
+                        'p0': p0,  'waviness': waviness, 'ctol_abs': ctol_abs,
+                        'ctol_rel': ctol_rel, 'ptol': ptol, 'zeroLtol': zeroLtol,
                         'time': conv_time, 'step': Nsteps,
                         'conv_condition': conv_condition, 'clamp': False},
                         index=[0])
@@ -505,6 +462,7 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=.75,ctol_abs=10**-3,ctol_rel=0.,
     metrics_sw['beta'] = beta
     metrics_sw['alpha'] = alpha  
     metrics_sw['p0'] = p0
+    metrics_sw['waviness'] = waviness
     metrics_sw['ctol_abs'] = ctol_abs
     metrics_sw['ctol_rel'] = ctol_rel
     metrics_sw['ptol'] = ptol 
@@ -514,6 +472,7 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=.75,ctol_abs=10**-3,ctol_rel=0.,
         dist_sw['beta'] = beta
         dist_sw['alpha'] = alpha
         dist_sw['p0'] = p0
+        dist_sw['waviness'] = waviness
         dist_sw['ctol_abs'] = ctol_abs
         dist_sw['ctol_rel'] = ctol_rel
         dist_sw['ptol'] = ptol
@@ -533,23 +492,24 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=.75,ctol_abs=10**-3,ctol_rel=0.,
         qy_t = qy_t_step(qt_x,qt,px,py_x)        
         # calculate and print metrics
         ht, hy_t, iyt, ht_x, ixt, L = calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
-        if verbose>0: print('clamped: I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (ixt,ht,hx,iyt,ixy,L))            
+        if verbose>0: print('clamped: ' + metrics_string(ixt,ht,hx,iyt,ixy,L))            
         # store everything
         clamp_step_time = time.time()-clamp_start_time
         metrics_conv = metrics_conv.append(pd.DataFrame(data={
                         'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T,
                         'ht_x': ht_x, 'hy_t': hy_t, 'hx': hx, 'ixy': ixy,
                         'time': conv_time+clamp_step_time, 'step': Nsteps+1,
-                        'Tmax': Tmax, 'beta': beta, 'alpha': alpha, 'p0': p0,
-                        'zeroLtol': zeroLtol, 'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
+                        'Tmax': Tmax, 'beta': beta, 'alpha': alpha,
+                        'p0': p0, 'waviness': waviness, 'zeroLtol': zeroLtol,
+                        'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
                         'ptol': ptol, 'conv_condition': conv_condition,
                         'clamp': True}, index=[0]), ignore_index = True)
         if compact>0: dist_conv = dist_conv.append(pd.DataFrame(data={
                         'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],
                         'time': conv_time+clamp_step_time, 'step': Nsteps+1,
                         'Tmax': Tmax, 'beta': beta, 'alpha': alpha,
-                        'p0': p0, 'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
-                        'ptol': ptol, 'zeroLtol': zeroLtol,
+                        'p0': p0, 'waviness': waviness, 'ctol_abs': ctol_abs,
+                        'ctol_rel': ctol_rel, 'ptol': ptol, 'zeroLtol': zeroLtol,
                         'conv_condition': conv_condition, 'clamp': True},
                         index=[0]), ignore_index = True)
     
@@ -626,12 +586,12 @@ def refine_beta(metrics_conv,verbose=2):
         
     # filter out betas above max_beta_allowed
     if any([beta>max_beta_allowed for beta in new_betas]):
-        new_betas = [beta for beta in new_betas if beta<max_beta_allowed]
         if verbose==2: print('Filtered out %i betas larger than max_beta_allowed.' % len([beta for beta in new_betas if beta>max_beta_allowed]))
-        if max_beta_allowed in (metrics_conv['beta'].values+new_betas):
+        new_betas = [beta for beta in new_betas if beta<max_beta_allowed]
+        if max_beta_allowed in (list(metrics_conv['beta'].values)+new_betas):
             if verbose==2: print('...and not replaced since max_beta_allowed = %i already used.' % max_beta_allowed)
         else:
-            new_betas += max_beta_allowed
+            new_betas += [max_beta_allowed]
             if verbose==2: print('And replaced them with max_beta_allowed = %i.' % max_beta_allowed)        
     
     if verbose>0:
@@ -681,14 +641,18 @@ def IB(pxy,fit_param,compact=1,verbose=2):
         *** parameters passed to IB_single (defaults set there) ***    
         Tmax = max cardinality of T / max # of clusters; if None, defaults
             to using |X|, which is the most conservative setting [=] pos integer
-        p0 = determines initialization of q(t|x) when alpha>0 (i.e. non-DIB fits)
+        p0 = determines initialization of q(t|x) jointly with waviness
+            for zero p0, q(t|x) is initialized fully randomly with no structure;
+                see waviness below for more
             for pos p0, p0 is prob mass on ~unique cluster for each input x
                 (i.e. q(t_i|x_i)=p0 where t_i is unique for each x_i)
             for neg p0, p0 is prob mass on shared cluster for all inputs
                 (i.e. q(t*_x_i)=p0 for all x_i)
-            in both cases, the probability over the remaining clusters is set
-                to a normalized uniform random vector (with prob mass 1-p0)
-            for p0=0, q(t|x_i) is set to a normalized unirand vec for each x_i
+            what happens to the remaining 1-p0 prob mass is determined by waviness
+        waviness = if waviness is None, remaining prob mass is a normalized
+            uniform random vector. Otherwise, remaining prob mass is assigned
+            uniformly, with uniform noise of magnitude +- waviness [=] 0<=waviness<=1
+            (for more on p0 and waviness, see init_qt_x)
         ctol_abs = absolute convergence tolerance; if L is the objective
             function, then if abs(L_old-L)<ctol_abs, converge [=] non-neg scalar
         ctol_rel = relative convergence tolerance; if
@@ -755,7 +719,7 @@ def IB(pxy,fit_param,compact=1,verbose=2):
     metrics_cols = ['L','T','ht','ht_x','hy_t','ixt','iyt','hx','ixy']
     dist_cols = ['qt_x','qt','qy_t']
     converged_cols = ['conv_condition','clamp']
-    all_cols = ['alpha','beta','Tmax','p0','ctol_abs','ctol_rel',
+    all_cols = ['alpha','beta','Tmax','p0','waviness','ctol_abs','ctol_rel',
                 'ptol','zeroLtol','step','time','repeat','repeats']
     
     # initialize dataframes
@@ -768,7 +732,8 @@ def IB(pxy,fit_param,compact=1,verbose=2):
     if compact>0: dist_conv = pd.DataFrame(columns=all_cols+dist_cols+converged_cols)
     if compact>0: dist_conv_allreps = pd.DataFrame(columns=all_cols+dist_cols+converged_cols)                                                                                            
     
-    # iterate over fit parameters (besides beta, which is done below)                                
+    # iterate over fit parameters (besides beta, which is done below)
+    fit_param = fit_param.where((pd.notnull(fit_param)), None) # NaN -> None                               
     for irow in range(len(fit_param.index)):
         
         # extract parameters for this fit
@@ -776,12 +741,13 @@ def IB(pxy,fit_param,compact=1,verbose=2):
         this_alpha = this_fit['alpha']
         # optional parameters that have defaults set above
         this_betas = set_param(this_fit,'betas',def_betas[:]) # slice here to pass by value, not ref
+        if not isinstance(this_betas,list): this_betas = [this_betas]
         this_beta_search = set_param(this_fit,'beta_search',def_beta_search)
         this_max_fits = set_param(this_fit,'max_fits',def_max_fits)
         this_max_time = set_param(this_fit,'max_time',def_max_time)
         this_repeats = int(set_param(this_fit,'repeats',def_repeats))
         # optional parameters that have defaults set by IB_single.py
-        param_dict = make_param_dict(this_fit,'Tmax','p0','ctol_abs','ctol_rel','ptol','zeroLtol','clamp') 
+        param_dict = make_param_dict(this_fit,'Tmax','p0','waviness','ctol_abs','ctol_rel','ptol','zeroLtol','clamp') 
         # make pre-fitting initializations
         betas = this_betas # stack of betas
         fit_count = 0
@@ -892,7 +858,8 @@ def clamp_IB(metrics_conv,dist_conv,pxy,verbose=1):
             start_time = time.time()
             beta = metrics_conv['beta'].iloc[irow]
             Tmax = metrics_conv['Tmax'].iloc[irow]
-            p0 = metrics_conv['p0'].iloc[irow]            
+            p0 = metrics_conv['p0'].iloc[irow]
+            waviness = metrics_conv['waviness'].iloc[irow]          
             ctol_abs = metrics_conv['ctol_abs'].iloc[irow]
             ctol_rel = metrics_conv['ctol_rel'].iloc[irow]
             ptol = metrics_conv['ptol'].iloc[irow]
@@ -902,11 +869,11 @@ def clamp_IB(metrics_conv,dist_conv,pxy,verbose=1):
             if verbose>0:
                 print('****************************** Clamping IB fit with following parameters ******************************')
                 if Tmax is None:
-                    print('alpha = %.2f, beta = %.1f, Tmax = None, p0 = %.3f, ctol_abs = %.1e, ctol_rel = %.1e, ptol = %.1e, zeroLtol = %.1e'\
-                        % (alpha,beta,p0,ctol_abs,ctol_rel,ptol,zeroLtol))
+                    print('alpha = %.2f, beta = %.1f, Tmax = None, p0 = %.3f, waviness = %.2f, ctol_abs = %.1e, ctol_rel = %.1e, ptol = %.1e, zeroLtol = %.1e'\
+                        % (alpha,beta,p0,waviness,ctol_abs,ctol_rel,ptol,zeroLtol))
                 else:
-                    print('alpha = %.2f, beta = %.1f, Tmax = %i, p0 = %.3f, ctol_abs = %.1e, ctol_rel = %.1e, ptol = %.1e, zeroLtol = %.1e'\
-                        % (alpha,beta,Tmax,p0,ctol_abs,ctol_rel,ptol,zeroLtol))
+                    print('alpha = %.2f, beta = %.1f, Tmax = %i, p0 = %.3f, waviness = %.2f, ctol_abs = %.1e, ctol_rel = %.1e, ptol = %.1e, zeroLtol = %.1e'\
+                        % (alpha,beta,Tmax,p0,waviness,ctol_abs,ctol_rel,ptol,zeroLtol))
                 print('**************************************************************************************************')
 
             qt_x = dist_conv['qt_x'].iloc[irow]
@@ -940,7 +907,7 @@ def clamp_IB(metrics_conv,dist_conv,pxy,verbose=1):
                             'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T,
                             'ht_x': ht_x, 'hy_t': hy_t, 'hx': hx, 'ixy': ixy, 
                             'time': conv_time, 'step': Nsteps, 'Tmax': Tmax,
-                            'beta': beta, 'alpha': alpha, 'p0': p0,
+                            'beta': beta, 'alpha': alpha, 'p0': p0, 'waviness': waviness,
                             'zeroLtol': zeroLtol, 'ctol_abs': ctol_abs,
                             'ctol_rel': ctol_rel, 'ptol': ptol,
                             'conv_condition': conv_condition, 'clamp': True},
@@ -948,8 +915,8 @@ def clamp_IB(metrics_conv,dist_conv,pxy,verbose=1):
             these_dist_conv = these_dist_conv.append(pd.DataFrame(data={
                             'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],
                             'Tmax': Tmax, 'beta': beta, 'alpha': alpha,
-                            'p0': p0, 'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
-                            'ptol': ptol, 'zeroLtol': zeroLtol,
+                            'p0': p0, 'waviness': waviness, 'ctol_abs': ctol_abs,
+                            'ctol_rel': ctol_rel, 'ptol': ptol, 'zeroLtol': zeroLtol,
                             'time': conv_time, 'step': Nsteps,
                             'conv_condition': conv_condition,  'clamp': True},
                             index=[0]),ignore_index = True)

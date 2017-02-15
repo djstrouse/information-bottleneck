@@ -68,9 +68,29 @@ def test_zeroLtol(pxy,compact=1):
     fit_param2 = pd.DataFrame(columns=['alpha','zeroLtol'])
     fit_param2['zeroLtol'] = zeroLtols
     fit_param2['alpha'] = 1.
-    fit_param = fit_param1.append(fit_param2)
+    fit_param = fit_param1.append(fit_param2, ignore_index = True)
     
     # do IB
+    return IB(pxy,fit_param,compact)
+    
+def test_zipf(pxy=0,compact=1):
+    # dumb experiment to remake fig2
+    lambdas = list(np.linspace(0,1,101))[0:-1]
+    betas = [l/(1-l) for l in lambdas]
+    fit_param1 = pd.DataFrame(data={ 'alpha': 0., 'betas': [betas], 'beta_search': False})
+    
+    # experiment focused on midpoint lambda=1/2 aka beta=1
+    fit_param2 = pd.DataFrame(data={'waviness': [.01, .02, .05, .1, .25, .5, .7, .9]})
+    fit_param2['alpha'] = 0.
+    fit_param2['betas'] = 1.
+    fit_param2['p0'] = 0.
+    fit_param2['beta_search'] = False
+    fit_param2['repeats'] = 30
+
+    # combine
+    fit_param = fit_param1.append(fit_param2, ignore_index = True)
+
+    #return fit_param
     return IB(pxy,fit_param,compact)
     
 
@@ -147,14 +167,14 @@ def insert_true_clustering(exp_name,verbose=1):
     return 0   
     
 def run_experiments(data_set="",compact=2,exp_name="",x=""):
-    """x should be a string subset of m/r/ip/in/c/z/gb, compact of 0/1/2."""
+    """x should be a string subset of m/r/initp/initn/c/zero/b/zipf, compact of 0/1/2."""
     cwd = os.getcwd()
-    results_path = cwd+'/data/'+exp_name+'_'
-    dataset_path = cwd+'/data/'+data_set+'_'
+    results_path = cwd+'/data/zipf/'+exp_name+'_'
+    dataset_path = cwd+'/data/zipf/'+data_set+'_'
     compact = int(compact)
     if "m" in x:
         # make new pxy
-        pxy = gen_dir_pxy()
+        pxy = gen_zipf_pxy()
         #np.save(dataset_path+'Xdata',Xdata)
         #np.save(dataset_path+'groups',groups)
         np.save(dataset_path+'pxy',pxy)
@@ -177,7 +197,7 @@ def run_experiments(data_set="",compact=2,exp_name="",x=""):
         else:
             metrics_conv.to_csv(results_path+'metrics_conv.csv')
             metrics_sw.to_csv(results_path+'metrics_sw.csv')
-    if "ip" in x: # initialization experiments - positive p0
+    if "initp" in x: # initialization experiments - positive p0
         metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
             dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
             test_p0_pos(pxy,compact)
@@ -193,7 +213,7 @@ def run_experiments(data_set="",compact=2,exp_name="",x=""):
         else:
             metrics_conv.to_csv(results_path+'metrics_conv_p0_pos.csv')
             metrics_sw.to_csv(results_path+'metrics_sw_p0_pos.csv')
-    if "in" in x: # initialization experiments - negative p0
+    if "initn" in x: # initialization experiments - negative p0
         metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
             dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
             test_p0_neg(pxy,compact)
@@ -225,7 +245,7 @@ def run_experiments(data_set="",compact=2,exp_name="",x=""):
         else:
             metrics_conv.to_csv(results_path+'metrics_conv_ctol.csv')
             metrics_sw.to_csv(results_path+'metrics_sw_ctol.csv')
-    if "z" in x: # zeroL tolerance experiments
+    if "zero" in x: # zeroL tolerance experiments
         metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
             dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
             test_zeroLtol(pxy,compact)
@@ -257,4 +277,20 @@ def run_experiments(data_set="",compact=2,exp_name="",x=""):
         else:
             metrics_conv.to_csv(results_path+'metrics_conv_bestbeta.csv')
             metrics_sw.to_csv(results_path+'metrics_sw_bestbeta.csv')
-    return 0
+    if "zipf" in x: # zipf experiments
+        metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
+            dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
+            test_zipf(pxy,compact)
+        if compact>1:
+            metrics_conv_allreps.to_csv(results_path+'metrics_conv_zipf.csv')
+            metrics_sw_allreps.to_csv(results_path+'metrics_sw_zipf.csv')
+            dist_conv_allreps.to_pickle(results_path+'dist_conv_zipf.pkl')
+            dist_sw_allreps.to_pickle(results_path+'dist_sw_zipf.pkl')
+        elif compact>0:
+            metrics_conv_allreps.to_csv(results_path+'metrics_conv_zipf.csv')
+            metrics_sw_allreps.to_csv(results_path+'metrics_sw_zipf.csv')
+            dist_conv_allreps.to_pickle(results_path+'dist_conv_zipf.pkl')
+        else:
+            metrics_conv_allreps.to_csv(results_path+'metrics_conv_zipf.csv')
+            metrics_sw_allreps.to_csv(results_path+'metrics_sw_zipf.csv')
+    return
