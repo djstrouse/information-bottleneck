@@ -8,19 +8,44 @@ vexp = np.vectorize(math.exp)
 # A word on notation: for probability variables, an underscore here means a
 # conditioning, so read _ as |.
 
-def verify_inputs(pxy,beta,alpha,Tmax,p0,waviness,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,compact,verbose):
+# todos:
+#   OOP it all, starting with dataset
+#   fold smoothing into IB so that s is a parameter
+#   draw IB curve during fits
+#   function to plot geometric clustering solutions (i.e. color points in coord plane)
+
+def verify_inputs(pxy,beta,alpha,qt_x,Tmax,p0,waviness,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,geoapprox,compact,verbose):
     """Helper function for IB which checks for validity of input parameters."""
+    if not(isinstance(geoapprox,bool)):
+        raise ValueError('geoapprox must be a boolean')
+    if geoapprox:
+        if not(isinstance(pxy,dict)):
+            raise ValueError('When geoapprox = True, pxy must be a dictionary')
+        coord = pxy['coord']
+        s = pxy['s']
+        pxy = pxy['pxy']
+        if not(isinstance(coord,np.ndarray)):
+            raise ValueError('coord (in pxy dict) must be a numpy array')
+        if not(isinstance(s,(int,float))) and s>0:
+            raise ValueError('s (in pxy dict) must be a positive scalar')
     if not(isinstance(pxy,np.ndarray)):
         raise ValueError('pxy must be a numpy array')
     if np.any(pxy<0) or np.any(pxy>1):
         raise ValueError('entries of pxy must be between 0 and 1')
     if abs(np.sum(pxy)-1)>ptol:
         raise ValueError('pxy must be normalized')
-    if not(beta>0) or not(isinstance(beta,(int,float))):
+    if not(beta>0) or not(isinstance(beta,(int,float,np.int64))):
         raise ValueError('beta must be a positive scalar')
-    if alpha<0 or not(isinstance(alpha,(int,float))):
+    if alpha<0 or not(isinstance(alpha,(int,float,np.int64))):
         raise ValueError('alpha must be a non-negative scalar')
-    if Tmax is not None and (not(isinstance(Tmax,int)) or Tmax<1):
+    if not(isinstance(qt_x,np.ndarray)) and qt_x is not None:
+        raise ValueError('qt_x must be a numpy array')
+    if isinstance(qt_x,np.ndarray):
+        if np.any(qt_x<0) or np.any(qt_x>1):
+            raise ValueError('entries of qt_x must be between 0 and 1')
+        if any(abs(np.sum(qt_x,axis=0)-1)>ptol):
+            raise ValueError('columns of qt_x must be normalized')
+    if Tmax is not None and (not(isinstance(Tmax,(int,float))) or Tmax<1):
         raise ValueError('Tmax must be a positive integer (or None)')
     if p0 is not None and (p0<-1 or p0>1 or not(isinstance(p0,(int,float)))):
         raise ValueError('p0 must be a float/int between -1 and 1')
@@ -36,7 +61,7 @@ def verify_inputs(pxy,beta,alpha,Tmax,p0,waviness,ctol_abs,ctol_rel,ptol,zeroLto
         raise ValueError('ptol must be a positive float')
     if zeroLtol<0:
         raise ValueError('zeroLtol must be positive')
-    if not(isinstance(clamp,bool)):
+    if not(isinstance(clamp,(bool,np.bool_))):
         raise ValueError('clamp must be a boolean')
     if not(verbose in (0,1,2)):
         raise ValueError('verbose should be 0, 1, or 2')
@@ -144,10 +169,10 @@ def kl(P,Q):
             for l in range(L):
                 DKL[n,l] = kl_single(P[:,n],Q[:,l])
     return DKL
-
+    
 def qt_step(qt_x,px,ptol,verbose):
     """Peforms q(t) update step for generalized Information Bottleneck."""
-    T, X = qt_x.shape   
+    T,X = qt_x.shape   
     qt = np.dot(qt_x,px)
     dropped = qt<=ptol # clusters to drop due to near-zero prob
     if any(dropped):
@@ -161,15 +186,40 @@ def qt_step(qt_x,px,ptol,verbose):
     
 def qy_t_step(qt_x,qt,px,py_x):
     """Peforms q(y|t) update step for generalized Information Bottleneck."""
-    return np.dot(py_x,np.multiply(qt_x,np.outer(1./qt,px)).T)
+    return np.dot(py_x,np.multiply(qt_x,np.outer(1./qt,px)).T)    
 
-def qt_x_step(qt,py_x,qy_t,T,X,alpha,beta,verbose):
+def qt_x_step(qt,py_x,qy_t,alpha,beta):
     """Peforms q(t|x) update step for generalized Information Bottleneck."""
+    T,X = len(qt),py_x.shape[1]
     if T==1: qt_x = np.ones((1,X))
     else:
         qt_x = np.zeros((T,X))
         for x in range(X):
             l = vlog(qt)-beta*kl(py_x[:,x],qy_t) # [=] T x 1 # scales like X*Y*T
+            if alpha==0: qt_x[np.argmax(l),x] = 1
+            else: qt_x[:,x] = vexp(l/alpha)/np.sum(vexp(l/alpha)) # note: l/alpha<-745 is where underflow creeps in
+    return qt_x
+    
+def build_dist_mat(qt_x,qt,coord):
+    """Replaces the qy_t_step when using geoapprox."""
+    T,X = qt_x.shape
+    Dxt = np.zeros((X,T))
+    for x in range(X):
+        for t in range(T):
+            for otherx in np.nditer(np.nonzero(qt_x[t,:])): # only iterate over x with nonzero involvement
+                Dxt[x,t] += qt_x[t,otherx]*np.linalg.norm(coord[x,:]-coord[otherx,:])**2
+            Dxt[x,t] *= 1/(X*qt[t])
+    return Dxt
+    
+def qt_x_step_geoapprox(qt,Dxt,s,alpha,beta):
+    """Peforms q(t|x) update step for approximate generalized Information
+    Bottleneck, an algorithm for geometric clustering."""
+    X,T = Dxt.shape
+    if T==1: qt_x = np.ones((1,X))
+    else:
+        qt_x = np.zeros((T,X))
+        for x in range(X):            
+            l = vlog(qt)-(beta/(2*s**2))*Dxt[x,:] # only substantive difference from qt_x_step         
             if alpha==0: qt_x[np.argmax(l),x] = 1
             else: qt_x[:,x] = vexp(l/alpha)/np.sum(vexp(l/alpha)) # note: l/alpha<-745 is where underflow creeps in
     return qt_x
@@ -258,16 +308,18 @@ def store_sw_metrics(metrics_sw,L,ixt,iyt,ht,T,ht_x,hy_t,time,step):
                 'hy_t': hy_t, 'time': time, 'step': step},
                 index = [0]), ignore_index = True)
     
-def store_sw_dist(dist_sw,qt_x,qt,qy_t,step):    
+def store_sw_dist(dist_sw,qt_x,qt,qy_t,Dxt,L,ixt,iyt,ht,T,ht_x,hy_t,time,step):    
     return dist_sw.append(pd.DataFrame(data={
-                'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],'step': step},
-                index = [0]), ignore_index = True)
+                'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t], 'Dxt': [Dxt],
+                'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T, 'ht_x': ht_x,
+                'hy_t': hy_t, 'time': time, 'step': step},
+                index = [0]), ignore_index = True)   
     
 def metrics_string(ixt,ht,hx,iyt,ixy,L):
     return 'I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (ixt,ht,hx,iyt,ixy,L)
     
-def IB_single(pxy,beta,alpha,Tmax=None,p0=None,waviness=None,ctol_abs=10**-3,ctol_rel=0.,
-              ptol=10**-8,zeroLtol=1,clamp=True,compact=1,verbose=2):
+def IB_single(pxy,beta,alpha,qt_x=None,Tmax=None,p0=None,waviness=None,ctol_abs=10**-6,ctol_rel=0.,
+              ptol=10**-8,zeroLtol=0,clamp=True,geoapprox=False,compact=1,verbose=2):
     """Performs a single fit of the generalized Information Bottleneck on the
     joint distribution p(x,y) for a given beta and alpha.
     
@@ -275,16 +327,21 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=None,waviness=None,ctol_abs=10**-3,cto
         
     # PRE-IB STEP INIT AND PROCESSING
         
-    verify_inputs(pxy,beta,alpha,Tmax,p0,waviness,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,compact,verbose)
+    verify_inputs(pxy,beta,alpha,qt_x,Tmax,p0,waviness,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,geoapprox,compact,verbose)
     
     conv_thresh = 1 # steps in a row of small change to consider converged
     
     # process inputs
-    if isinstance(alpha,int): alpha = float(alpha)
-    if isinstance(beta,int): beta = float(beta)
+    if isinstance(alpha,(int,np.int64)): alpha = float(alpha)
+    if isinstance(beta,(int,np.int64)): beta = float(beta)
+    if isinstance(Tmax,float): Tmax = int(Tmax)
     if p0 is None:
         if alpha==0: p0 = 1. # DIB default: deterministic init that spreads points evenly across clusters
-        else: p0 = .75 # non-DIB default: DIB-like init but with only 75% prob mass on "assigned" cluster           
+        else: p0 = .75 # non-DIB default: DIB-like init but with only 75% prob mass on "assigned" cluster
+    if geoapprox:
+        coord = pxy['coord']
+        s = pxy['s']
+        pxy = pxy['pxy']
     pxy, px, py_x, hx, hy, hy_x, ixy, X, Y, zx, zy = process_pxy(pxy,verbose)
     if Tmax is None:
         Tmax = X
@@ -293,23 +350,30 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=None,waviness=None,ctol_abs=10**-3,cto
         if verbose==2: print('Reduced Tmax from %i to %i based on X' % (Tmax,X))
         Tmax = X
     else: Tmax = int(Tmax)
+    if qt_x is not None: # init set, so init-related variables don't matter
+        p0 = None
+        waviness = None
         
     # report
     if verbose>0:
-        print('****************************************************** Beginning IB fit with the following parameters ******************************************************')
+        print('***************************************************** Beginning IB fit with the following parameters *****************************************************')
         if Tmax is None: Tmax_str = 'None'
         else: Tmax_str = '%i' % Tmax
         if p0 is None: p0_str = 'None'
         else: p0_str = '%.3f' % p0
         if waviness is None: waviness_str = 'None'
         else: waviness_str = '%.2f' % waviness
-        print('alpha = %.2f, beta = %.1f, Tmax = %s, p0 = %s, waviness = %s, ctol_abs = %.1e, ctol_rel = %.1e, ptol = %.1e, zeroLtol = %.1e, clamp = %s' %\
-              (alpha, beta, Tmax_str, p0_str, waviness_str, ctol_abs, ctol_rel, ptol, zeroLtol, clamp))
-        print('************************************************************************************************************************************************************')
+        if qt_x is not None:
+            p0_str = 'N/A'
+            waviness_str = 'N/A'
+        print('alpha = %.2f, beta = %.1f, Tmax = %s, p0 = %s, wav = %s, clamp = %s, geo = %s, ctol_abs = %.0e, ctol_rel = %.0e, ptol = %.0e, zeroLtol = %.0e' %\
+              (alpha, beta, Tmax_str, p0_str, waviness_str, clamp, geoapprox, ctol_abs, ctol_rel, ptol, zeroLtol))
+        print('**********************************************************************************************************************************************************')
                         
     # initialize dataframes
-    metrics_sw = pd.DataFrame(columns=['L','ixt','iyt','ht','T','ht_x','hy_t','step','time'])
-    if compact>1: dist_sw = pd.DataFrame(columns=['qt_x','qt','qy_t','step'])
+    cols = ['L','ixt','iyt','ht','T','ht_x','hy_t','step','time']
+    metrics_sw = pd.DataFrame(columns=cols)
+    if compact>1: dist_sw = pd.DataFrame(columns=['qt_x','qt','qy_t','Dxt']+cols)
         
     # IB STEP ITERATIONS
 
@@ -318,17 +382,21 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=None,waviness=None,ctol_abs=10**-3,cto
     step_start_time = time.time()
     # STEP 0: INITIALIZE
     # initialize q(t|x)
-    qt_x = init_qt_x(alpha,X,T,p0,waviness)
+    if qt_x is None: qt_x = init_qt_x(alpha,X,T,p0,waviness)
+    qt_x0 = qt_x # save init
     # initialize q(t) given q(t|x)
     qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)
     # initialize q(y|t) given q(t|x) and q(t)
     qy_t = qy_t_step(qt_x,qt,px,py_x)
+    # initialize distance matrix, if using geoapprox
+    if geoapprox: Dxt = build_dist_mat(qt_x,qt,coord)
+    else: Dxt = None
     # calculate and print metrics
     ht, hy_t, iyt, ht_x, ixt, L = calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
     if verbose==2: print('init: ' + metrics_string(ixt,ht,hx,iyt,ixy,L))
     step_time = time.time() - step_start_time
     metrics_sw = store_sw_metrics(metrics_sw,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,step=0)
-    if compact>1: dist_sw = store_sw_dist(dist_sw,qt_x,qt,qy_t,step=0)
+    if compact>1: dist_sw = store_sw_dist(dist_sw,qt_x,qt,qy_t,Dxt,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,step=0)
     
     # ITERATE STEPS 1-3 TO CONVERGENCE
     converged = 0
@@ -342,13 +410,22 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=None,waviness=None,ctol_abs=10**-3,cto
     else: conv_condition = ''
     while converged<conv_thresh: 
         step_start_time = time.time()
-        Nsteps += 1        
-        # STEP 1: UPDATE Q(T|X)
-        qt_x = qt_x_step(qt,py_x,qy_t,T,X,alpha,beta,verbose)
-        # STEP 2: UPDATE Q(T)
-        qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)
-        # STEP 3: UPDATE Q(Y|T)
-        qy_t = qy_t_step(qt_x,qt,px,py_x)
+        Nsteps += 1
+        if geoapprox:
+            # STEP 1: UPDATE Q(T|X) USING APPROX
+            qt_x = qt_x_step_geoapprox(qt,Dxt,s,alpha,beta)
+            # STEP 2: UPDATE Q(T)
+            qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)
+            # STEP 3: UPDATE Q(Y|T) AND DISTANCE MATRIX
+            qy_t = qy_t_step(qt_x,qt,px,py_x)
+            Dxt = build_dist_mat(qt_x,qt,coord)
+        else:
+            # STEP 1: UPDATE Q(T|X)
+            qt_x = qt_x_step(qt,py_x,qy_t,alpha,beta)
+            # STEP 2: UPDATE Q(T)
+            qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)
+            # STEP 3: UPDATE Q(Y|T)
+            qy_t = qy_t_step(qt_x,qt,px,py_x)
         # calculate and print metrics
         ht, hy_t, iyt, ht_x, ixt, L = calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
         if verbose==2: print('step %i: ' % Nsteps + metrics_string(ixt,ht,hx,iyt,ixy,L))
@@ -396,16 +473,16 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=None,waviness=None,ctol_abs=10**-3,cto
                 if len(conv_condition)==0: conv_condition = 'cost_func_rel_inc'
                 else: conv_condition += '_AND_cost_func_rel_inc'
             # revert to metrics/distributions from last step
-            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t =\
-            L_old, ixt_old, iyt_old, ht_old, T_old, ht_x_old, hy_t_old, qt_x_old, qt_old, qy_t_old
+            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t, Dxt =\
+            L_old, ixt_old, iyt_old, ht_old, T_old, ht_x_old, hy_t_old, qt_x_old, qt_old, qy_t_old, Dxt_old
         else:
             # store stepwise data
             step_time = time.time() - step_start_time 
             metrics_sw = store_sw_metrics(metrics_sw,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,Nsteps)
-            if compact>1: dist_sw = store_sw_dist(dist_sw,qt_x,qt,qy_t,Nsteps)
+            if compact>1: dist_sw = store_sw_dist(dist_sw,qt_x,qt,qy_t,Dxt,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,Nsteps)
             # store this step in case need to revert at next step
-            L_old, ixt_old, iyt_old, ht_old, T_old, ht_x_old, hy_t_old, qt_x_old, qt_old, qy_t_old =\
-            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t
+            L_old, ixt_old, iyt_old, ht_old, T_old, ht_x_old, hy_t_old, qt_x_old, qt_old, qy_t_old, Dxt_old =\
+            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t, Dxt
     # end iterative IB steps
     
     # report
@@ -418,19 +495,21 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=None,waviness=None,ctol_abs=10**-3,cto
         sqt_x[0,:] = 1.
         sqt_x,sqt,sT = qt_step(sqt_x,px,ptol,verbose)
         sqy_t = qy_t_step(sqt_x,sqt,px,py_x)
+        if geoapprox: sDxt = build_dist_mat(sqt_x,sqt,coord)
+        else: sDxt = None
         sht, shy_t, siyt, sht_x, sixt, sL = calc_metrics(sqt_x,sqt,sqy_t,px,hy,alpha,beta)
         if sL<(L-zeroLtol): # if better fit...
             conv_condition += '_AND_force_single'
             if verbose>0: print("Single-cluster mapping reduces L from %.4f to %.4f; replacing solution." % (L,sL))
             # replace everything
-            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t =\
-            sL, sixt, siyt, sht, sT, sht_x, shy_t, sqt_x, sqt, sqy_t
+            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t, Dxt =\
+            sL, sixt, siyt, sht, sT, sht_x, shy_t, sqt_x, sqt, sqy_t, sDxt
             # store stepwise data
             step_time = time.time() - step_start_time 
             metrics_sw = store_sw_metrics(metrics_sw,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,Nsteps+1)
-            if compact>1: dist_sw = store_sw_dist(dist_sw,qt_x,qt,qy_t,Nsteps+1)
-            L_old, ixt_old, iyt_old, ht_old, T_old, ht_x_old, hy_t_old, qt_x_old, qt_old, qy_t_old =\
-            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t
+            if compact>1: dist_sw = store_sw_dist(dist_sw,qt_x,qt,qy_t,Dxt,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,Nsteps+1)
+            L_old, ixt_old, iyt_old, ht_old, T_old, ht_x_old, hy_t_old, qt_x_old, qt_old, qy_t_old, Dxt_old =\
+            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t, Dxt
             if verbose>0: print('single-cluster solution: ' + metrics_string(ixt,ht,hx,iyt,ixy,L))            
         elif verbose>0: print("Single-cluster mapping not better; changes L from %.4f to %.4f (zeroLtol = %.1e)." % (L,sL,zeroLtol))
     # end single-cluster check
@@ -444,15 +523,17 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=None,waviness=None,ctol_abs=10**-3,cto
                         'beta': beta, 'alpha': alpha, 'p0': p0, 'waviness': waviness,
                         'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
                         'ptol': ptol, 'zeroLtol': zeroLtol,
-                        'conv_condition': conv_condition, 'clamp': False},
+                        'conv_condition': conv_condition, 'clamp': False, 'geoapprox': geoapprox},
                         index=[0])
     if compact>0: dist_conv = pd.DataFrame(data={
-                        'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],
-                        'Tmax': Tmax, 'beta': beta, 'alpha': alpha,
-                        'p0': p0,  'waviness': waviness, 'ctol_abs': ctol_abs,
-                        'ctol_rel': ctol_rel, 'ptol': ptol, 'zeroLtol': zeroLtol,
-                        'time': conv_time, 'step': Nsteps,
-                        'conv_condition': conv_condition, 'clamp': False},
+                        'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t], 'Dxt': [Dxt],
+                        'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T,
+                        'ht_x': ht_x, 'hy_t': hy_t, 'hx': hx, 'ixy': ixy,
+                        'time': conv_time, 'step': Nsteps, 'Tmax': Tmax,
+                        'beta': beta, 'alpha': alpha, 'p0': p0, 'waviness': waviness,
+                        'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
+                        'ptol': ptol, 'zeroLtol': zeroLtol,
+                        'conv_condition': conv_condition, 'clamp': False, 'geoapprox': geoapprox},
                         index=[0])
                                 
     # add in stuff that doesn't vary by step to the stepwise dataframe
@@ -467,6 +548,7 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=None,waviness=None,ctol_abs=10**-3,cto
     metrics_sw['ctol_rel'] = ctol_rel
     metrics_sw['ptol'] = ptol 
     metrics_sw['zeroLtol'] = zeroLtol
+    metrics_sw['geoapprox'] = geoapprox
     if compact>1:
         dist_sw['Tmax'] = Tmax
         dist_sw['beta'] = beta
@@ -477,19 +559,22 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=None,waviness=None,ctol_abs=10**-3,cto
         dist_sw['ctol_rel'] = ctol_rel
         dist_sw['ptol'] = ptol
         dist_sw['zeroLtol'] = zeroLtol
+        dist_sw['geoapprox'] = geoapprox
     
     # optional clamping step (doesn't apply to DIB)
     if alpha>0 and clamp:       
         clamp_start_time = time.time()        
         # STEP 1: CLAMP Q(T|X)
+        cqt_x = np.zeros(qt_x.shape)
         for x in range(X):
             tstar = np.argmax(qt_x[:,x])
-            qt_x[:,x] = 0
-            qt_x[tstar,x] = 1        
+            cqt_x[tstar,x] = 1
+        qt_x = cqt_x
         # STEP 2: UPDATE Q(T)
         qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)        
         # STEP 3: UPDATE Q(Y|T)
-        qy_t = qy_t_step(qt_x,qt,px,py_x)        
+        qy_t = qy_t_step(qt_x,qt,px,py_x)
+        if geoapprox: Dxt = build_dist_mat(qt_x,qt,coord)
         # calculate and print metrics
         ht, hy_t, iyt, ht_x, ixt, L = calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
         if verbose>0: print('clamped: ' + metrics_string(ixt,ht,hx,iyt,ixy,L))            
@@ -503,18 +588,21 @@ def IB_single(pxy,beta,alpha,Tmax=None,p0=None,waviness=None,ctol_abs=10**-3,cto
                         'p0': p0, 'waviness': waviness, 'zeroLtol': zeroLtol,
                         'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
                         'ptol': ptol, 'conv_condition': conv_condition,
-                        'clamp': True}, index=[0]), ignore_index = True)
+                        'clamp': True, 'geoapprox': geoapprox}, index=[1]), ignore_index = True)
         if compact>0: dist_conv = dist_conv.append(pd.DataFrame(data={
-                        'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],
+                        'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t], 'Dxt': [Dxt],
+                        'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T,
+                        'ht_x': ht_x, 'hy_t': hy_t, 'hx': hx, 'ixy': ixy,
                         'time': conv_time+clamp_step_time, 'step': Nsteps+1,
                         'Tmax': Tmax, 'beta': beta, 'alpha': alpha,
-                        'p0': p0, 'waviness': waviness, 'ctol_abs': ctol_abs,
-                        'ctol_rel': ctol_rel, 'ptol': ptol, 'zeroLtol': zeroLtol,
-                        'conv_condition': conv_condition, 'clamp': True},
-                        index=[0]), ignore_index = True)
-    
+                        'p0': p0, 'waviness': waviness, 'zeroLtol': zeroLtol,
+                        'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
+                        'ptol': ptol, 'conv_condition': conv_condition,
+                        'clamp': True, 'geoapprox': geoapprox},
+                        index=[1]), ignore_index = True)
+        
     # return results
-    if compact<=1: dist_sw = None
+    if compact<=1: dist_sw = pd.DataFrame(data={'qt_x': [qt_x0]},index=[0]) # at least pass back init
     if compact==0: dist_conv = None
     return metrics_sw, dist_sw, metrics_conv, dist_conv
             
@@ -523,19 +611,20 @@ def refine_beta(metrics_conv,verbose=2):
     
     # parameters governing insertion of betas, or when there is a transition to NaNs (due to under/overflow)
     l = 1 # number of betas to insert into gaps
-    del_R = .05 # if fractional change in I(Y;T) exceeds this between adjacent betas, insert more betas
-    del_C = .05 # if fractional change in H(T) or I(X;T) exceeds this between adjacent betas, insert more betas
-    min_abs_res = 1e-1 # if beta diff smaller than this absolute threshold, don't insert; consider as phase transition
-    min_rel_res = 2e-2 # if beta diff smaller than this fractional threshold, don't insert
+    del_R = .02 # if fractional change in I(Y;T) exceeds this between adjacent betas, insert more betas
+    del_C = .02 # if fractional change in H(T) or I(X;T) exceeds this between adjacent betas, insert more betas
+    del_T = 1 # if difference in number of clusters used exceeds this between adjacent betas, insert more betas
+    min_abs_res = 1e-4 # if beta diff smaller than this absolute threshold, don't insert; consider as phase transition
+    min_rel_res = 1e-4 # if beta diff smaller than this fractional threshold, don't insert
     # parameters governing insertion of betas when I(X;T) doesn't reach zero
     eps0 = 1e-2 # tolerance for considering I(X;T) to be zero
     l0 = 1 # number of betas to insert at low beta end
     f0 = .5 # new betas will be minbeta*f0.^1:l0
     # parameters governing insertion of betas when I(T;Y) doesn't reach I(X;Y)
-    eps1 = .99 # tolerance for considering I(T;Y) to be I(X;Y)
+    eps1 = .999 # tolerance for considering I(T;Y) to be I(X;Y)
     l1 = 1 # number of betas to insert at high beta end
     f1 = 2 # new betas will be maxbeta*f0.^1:l0
-    max_beta_allowed = 100 # any proposed betas above this will be filtered out and replaced it max_beta_allowed
+    max_beta_allowed = 500 # any proposed betas above this will be filtered out and replaced it max_beta_allowed
 
     # sort fits by beta
     metrics_conv = metrics_conv.sort_values(by='beta')
@@ -567,10 +656,13 @@ def refine_beta(metrics_conv,verbose=2):
             ixt1 = metrics_conv['ixt'].iloc[i]
             ixt2 = metrics_conv['ixt'].iloc[i+1]
             ht1 = metrics_conv['ht'].iloc[i]
-            ht2 = metrics_conv['ht'].iloc[i+1]            
+            ht2 = metrics_conv['ht'].iloc[i+1]
+            T1 = metrics_conv['T'].iloc[i]
+            T2 = metrics_conv['T'].iloc[i+1]         
             if ((abs(iyt1-iyt2)/ixy)>del_R) or\
                ((abs(ixt1-ixt2)/logT)>del_C) or\
                ((abs(ht1-ht2)/logT)>del_C) or\
+               ((T2-T1)>del_T) or\
                NaNtran:
                    new_betas += list(np.linspace(beta1,beta2,l+2)[1:l+1])
                    if verbose==2: print('Added %i betas between %.1f and %.1f.' % (l,beta1,beta2))
@@ -709,31 +801,32 @@ def IB(pxy,fit_param,compact=1,verbose=2):
     
     # set defaults
     def_betas = [.1,1,2,3,4,5,7,9,10]
-    def_betas.reverse()
+    def_betas.sort(reverse=True)
     def_beta_search = True
     def_max_fits = 100
     def_max_time = 7*24*60*60 # 1 week
     def_repeats = 1
     
     # frequently used column names
-    metrics_cols = ['L','T','ht','ht_x','hy_t','ixt','iyt','hx','ixy']
-    dist_cols = ['qt_x','qt','qy_t']
+    dist_cols = ['qt_x','qt','qy_t','Dxt']
     converged_cols = ['conv_condition','clamp']
-    all_cols = ['alpha','beta','Tmax','p0','waviness','ctol_abs','ctol_rel',
-                'ptol','zeroLtol','step','time','repeat','repeats']
+    all_cols = ['L','T','ht','ht_x','hy_t','ixt','iyt','hx','ixy',
+                'alpha','beta','Tmax','p0','waviness','ctol_abs','ctol_rel',
+                'ptol','zeroLtol','geoapprox','step','time','fitID','repeat','repeats']
     
     # initialize dataframes
-    metrics_sw = pd.DataFrame(columns=all_cols+metrics_cols)
-    metrics_sw_allreps = pd.DataFrame(columns=all_cols+metrics_cols)
-    metrics_conv = pd.DataFrame(columns=all_cols+metrics_cols+converged_cols)
-    metrics_conv_allreps = pd.DataFrame(columns=all_cols+metrics_cols+converged_cols)
-    if compact>1: dist_sw = pd.DataFrame(columns=all_cols+dist_cols)
-    if compact>1: dist_sw_allreps = pd.DataFrame(columns=all_cols+dist_cols) 
-    if compact>0: dist_conv = pd.DataFrame(columns=all_cols+dist_cols+converged_cols)
-    if compact>0: dist_conv_allreps = pd.DataFrame(columns=all_cols+dist_cols+converged_cols)                                                                                            
+    metrics_sw = pd.DataFrame(columns=all_cols)
+    metrics_sw_allreps = pd.DataFrame(columns=all_cols)
+    metrics_conv = pd.DataFrame(columns=all_cols+converged_cols)
+    metrics_conv_allreps = pd.DataFrame(columns=all_cols+converged_cols)
+    if compact>1: dist_sw = pd.DataFrame(columns=dist_cols+all_cols)
+    if compact>1: dist_sw_allreps = pd.DataFrame(columns=dist_cols+all_cols) 
+    if compact>0: dist_conv = pd.DataFrame(columns=dist_cols+all_cols+converged_cols)
+    if compact>0: dist_conv_allreps = pd.DataFrame(columns=dist_cols+all_cols+converged_cols)                                                                                            
     
     # iterate over fit parameters (besides beta, which is done below)
-    fit_param = fit_param.where((pd.notnull(fit_param)), None) # NaN -> None                               
+    fit_param = fit_param.where((pd.notnull(fit_param)), None) # NaN -> None   
+    fitID = 0                            
     for irow in range(len(fit_param.index)):
         
         # extract parameters for this fit
@@ -748,29 +841,45 @@ def IB(pxy,fit_param,compact=1,verbose=2):
         this_repeats = int(set_param(this_fit,'repeats',def_repeats))
         # optional parameters that have defaults set by IB_single.py
         param_dict = make_param_dict(this_fit,'Tmax','p0','waviness','ctol_abs','ctol_rel','ptol','zeroLtol','clamp') 
+        geoapprox = this_fit.get('geoapprox',False)
         # make pre-fitting initializations
         betas = this_betas # stack of betas
         fit_count = 0
         fit_time = 0
         fit_start_time = time.time()
-        # this df is used for beta refinement
-        these_betas_metrics_conv = pd.DataFrame(columns=['ht','ixt','iyt','hx','ixy','Tmax','beta','conv_condition'])
+        # this df is used for beta refinement (separately do search with and without geoapprox)
+        these_betas_metrics_conv = pd.DataFrame(columns=['ht','ixt','iyt','hx','ixy','T','Tmax','beta','conv_condition'])
+        if geoapprox: these_betas_metrics_conv_approx = pd.DataFrame(columns=['ht','ixt','iyt','hx','ixy','Tmax','beta','conv_condition'])
         
         while (fit_count<=this_max_fits) and (fit_time<=this_max_time) and (len(betas)>0):
             # pop beta from stack
             this_beta = betas.pop()            
             # init data structures that will store the repeated fits for this particular setting of parameters
-            these_reps_metrics_sw = pd.DataFrame(columns=all_cols+metrics_cols)
-            these_reps_metrics_conv = pd.DataFrame(columns=all_cols+metrics_cols+converged_cols)
-            if compact>1: these_reps_dist_sw = pd.DataFrame(columns=all_cols+dist_cols)                                                                                                                         
-            if compact>0: these_reps_dist_conv = pd.DataFrame(columns=all_cols+dist_cols+converged_cols)
+            these_reps_metrics_sw = pd.DataFrame(columns=all_cols)
+            these_reps_metrics_conv = pd.DataFrame(columns=all_cols+converged_cols)
+            if compact>1: these_reps_dist_sw = pd.DataFrame(columns=dist_cols+all_cols)                                                                                                                         
+            if compact>0: these_reps_dist_conv = pd.DataFrame(columns=dist_cols+all_cols+converged_cols)
             
             # loop over repeats                                        
             for repeat in range(this_repeats):
                 # do a single fit
                 if verbose>0: print("+++++++++++ repeat %i of %i +++++++++++" % (repeat+1,this_repeats))
-                this_metrics_sw, this_dist_sw, this_metrics_conv, this_dist_conv = \
-                    IB_single(pxy,this_beta,this_alpha,compact=compact,verbose=verbose,**param_dict)
+                if geoapprox:
+                    # run first without approx
+                    this_metrics_sw, this_dist_sw, this_metrics_conv, this_dist_conv = \
+                        IB_single(pxy['pxy'],this_beta,this_alpha,compact=compact,verbose=verbose,**param_dict,geoapprox=False)
+                    # then run with approx on same init
+                    qt_x0 = this_dist_sw['qt_x'].iloc[0]
+                    this_metrics_sw2, this_dist_sw2, this_metrics_conv2, this_dist_conv2 = \
+                        IB_single(pxy,this_beta,this_alpha,compact=compact,verbose=verbose,**param_dict,qt_x=qt_x0,geoapprox=True)
+                    # and combine both results
+                    this_metrics_sw = this_metrics_sw.append(this_metrics_sw2, ignore_index = True)
+                    this_dist_sw = this_dist_sw.append(this_dist_sw2, ignore_index = True)
+                    this_metrics_conv = this_metrics_conv.append(this_metrics_conv2, ignore_index = True)
+                    this_dist_conv = this_dist_conv.append(this_dist_conv2, ignore_index = True)
+                else:
+                    this_metrics_sw, this_dist_sw, this_metrics_conv, this_dist_conv = \
+                        IB_single(pxy,this_beta,this_alpha,compact=compact,verbose=verbose,**param_dict)
                 # add repeat labels
                 this_metrics_sw['repeat'] = repeat
                 this_metrics_sw['repeats'] = this_repeats
@@ -780,6 +889,12 @@ def IB(pxy,fit_param,compact=1,verbose=2):
                 if compact>1: this_dist_sw['repeats'] = this_repeats
                 if compact>0: this_dist_conv['repeat'] = repeat
                 if compact>0: this_dist_conv['repeats'] = this_repeats
+                # add fit ID
+                this_metrics_sw['fitID'] = fitID
+                this_metrics_conv['fitID'] = fitID
+                if compact>1: this_dist_sw['fitID'] = fitID
+                if compact>0: this_dist_conv['fitID'] = fitID
+                fitID += 1
                 # add this repeat to these repeats
                 these_reps_metrics_sw = these_reps_metrics_sw.append(this_metrics_sw, ignore_index = True)
                 these_reps_metrics_conv = these_reps_metrics_conv.append(this_metrics_conv, ignore_index = True)
@@ -793,9 +908,9 @@ def IB(pxy,fit_param,compact=1,verbose=2):
             if compact>1: dist_sw_allreps = dist_sw_allreps.append(these_reps_dist_sw, ignore_index = True)
             if compact>0: dist_conv_allreps = dist_conv_allreps.append(these_reps_dist_conv, ignore_index = True)
                 
-            # find best repeat (lowest L)
-            these_reps_metrics_conv_unclamped = these_reps_metrics_conv[these_reps_metrics_conv['clamp']==False]
-            best_id = these_reps_metrics_conv_unclamped['L'].idxmin()
+            # find best repeat (lowest L): ignored clamped and approx fits
+            these_reps_metrics_conv_vanilla = these_reps_metrics_conv[(these_reps_metrics_conv['clamp']==False) & (these_reps_metrics_conv['geoapprox']==False)]
+            best_id = these_reps_metrics_conv_vanilla['L'].idxmin()
             if np.isnan(best_id): # if all repeats NaNs, just use first repeat
                 best_repeat = 0
             else: # otherwise use best
@@ -811,8 +926,9 @@ def IB(pxy,fit_param,compact=1,verbose=2):
             if compact>1: dist_sw = dist_sw.append(best_dist_sw, ignore_index = True)
             if compact>0: dist_conv = dist_conv.append(best_dist_conv, ignore_index = True)
                 
-            # store best fits across beta for this set of parameters
-            these_betas_metrics_conv = these_betas_metrics_conv.append(best_metrics_conv[best_metrics_conv['clamp']==False], ignore_index = True)
+            # store best fits across beta for this set of parameters, ignoring clamped fits
+            these_betas_metrics_conv = these_betas_metrics_conv.append(best_metrics_conv[(best_metrics_conv['clamp']==False) & (best_metrics_conv['geoapprox']==False)], ignore_index = True)
+            if geoapprox: these_betas_metrics_conv_approx = these_betas_metrics_conv_approx.append(best_metrics_conv[(best_metrics_conv['clamp']==False) & (best_metrics_conv['geoapprox']==True)], ignore_index = True)
                     
             # advance
             fit_count += this_repeats
@@ -821,7 +937,11 @@ def IB(pxy,fit_param,compact=1,verbose=2):
             # refine beta if needed
             if len(betas)==0 and this_beta_search:
                 betas = refine_beta(these_betas_metrics_conv,verbose)
-                betas.reverse()
+                if geoapprox:
+                    if verbose>0: print('Now adding betas for geoapprox alg...')
+                    betas += refine_beta(these_betas_metrics_conv_approx,verbose)
+                betas.sort(reverse=True)
+                betas = list(set(betas)) # removes duplicates
                 
         if verbose>0:
             if fit_count>=this_max_fits: print('Stopped beta refinement because ran over max fit count of %i' % this_max_fits)
@@ -833,95 +953,3 @@ def IB(pxy,fit_param,compact=1,verbose=2):
     if compact==0: dist_conv, dist_conv_allreps = None, None
     return metrics_sw, dist_sw, metrics_conv, dist_conv,\
            metrics_sw_allreps, dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps
-
-def clamp_IB(metrics_conv,dist_conv,pxy,verbose=1):
-    """Function to 'clamp' IB fits after the fact; IB also has functionality
-        for doing this during normal fitting; see above. Assumes all fits in
-        input are unclamped."""
-    
-    metrics_conv['clamp'] = False
-    dist_conv['clamp'] = False
-    
-    # process pxy
-    pxy, px, py_x, hx, hy, hy_x, ixy, X, Y, zx, zy = process_pxy(pxy,verbose)
-    
-    # init data structure of clamped results
-    these_metrics_conv = pd.DataFrame(columns=list(metrics_conv.columns.values))
-    these_dist_conv = pd.DataFrame(columns=list(dist_conv.columns.values))
-    
-    # iterate over converged results
-    for irow in range(len(dist_conv.index)):
-        
-        alpha = metrics_conv['alpha'].iloc[irow] 
-        if alpha>0: # don't clamp DIB fits
-        
-            start_time = time.time()
-            beta = metrics_conv['beta'].iloc[irow]
-            Tmax = metrics_conv['Tmax'].iloc[irow]
-            p0 = metrics_conv['p0'].iloc[irow]
-            waviness = metrics_conv['waviness'].iloc[irow]          
-            ctol_abs = metrics_conv['ctol_abs'].iloc[irow]
-            ctol_rel = metrics_conv['ctol_rel'].iloc[irow]
-            ptol = metrics_conv['ptol'].iloc[irow]
-            zeroLtol = metrics_conv['zeroLtol'].iloc[irow]
-            conv_condition = metrics_conv['conv_condition'].iloc[irow]
-
-            if verbose>0:
-                print('****************************** Clamping IB fit with following parameters ******************************')
-                if Tmax is None:
-                    print('alpha = %.2f, beta = %.1f, Tmax = None, p0 = %.3f, waviness = %.2f, ctol_abs = %.1e, ctol_rel = %.1e, ptol = %.1e, zeroLtol = %.1e'\
-                        % (alpha,beta,p0,waviness,ctol_abs,ctol_rel,ptol,zeroLtol))
-                else:
-                    print('alpha = %.2f, beta = %.1f, Tmax = %i, p0 = %.3f, waviness = %.2f, ctol_abs = %.1e, ctol_rel = %.1e, ptol = %.1e, zeroLtol = %.1e'\
-                        % (alpha,beta,Tmax,p0,waviness,ctol_abs,ctol_rel,ptol,zeroLtol))
-                print('**************************************************************************************************')
-
-            qt_x = dist_conv['qt_x'].iloc[irow]
-            
-            # STEP 1: CLAMP Q(T|X)
-            for x in range(X):
-                tstar = np.argmax(qt_x[:,x])
-                qt_x[:,x] = 0
-                qt_x[tstar,x] = 1            
-            # STEP 2: UPDATE Q(T)
-            qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)            
-            # STEP 3: UPDATE Q(Y|T)
-            qy_t = qy_t_step(qt_x,qt,px,py_x)            
-            # calculate and print metrics
-            ht, hy_t, iyt, ht_x, ixt, L = calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
-            if verbose>0:
-                old_ixt = metrics_conv['ixt'].iloc[irow]
-                old_ht = metrics_conv['ht'].iloc[irow]
-                old_iyt = metrics_conv['iyt'].iloc[irow]
-                old_L = metrics_conv['L'].iloc[irow]
-                print('***** unclamped fit *****')
-                print('I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (old_ixt,old_ht,hx,old_iyt,ixy,old_L))
-                print('***** clamped fit *****')
-                print('I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (ixt,ht,hx,iyt,ixy,L))
-                
-            # store everything
-            this_step_time = time.time()-start_time
-            Nsteps = metrics_conv['step'].iloc[irow]+1
-            conv_time = metrics_conv['time'].iloc[irow]+this_step_time
-            these_metrics_conv = these_metrics_conv.append(pd.DataFrame(data={
-                            'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T,
-                            'ht_x': ht_x, 'hy_t': hy_t, 'hx': hx, 'ixy': ixy, 
-                            'time': conv_time, 'step': Nsteps, 'Tmax': Tmax,
-                            'beta': beta, 'alpha': alpha, 'p0': p0, 'waviness': waviness,
-                            'zeroLtol': zeroLtol, 'ctol_abs': ctol_abs,
-                            'ctol_rel': ctol_rel, 'ptol': ptol,
-                            'conv_condition': conv_condition, 'clamp': True},
-                            index=[0]),ignore_index = True)
-            these_dist_conv = these_dist_conv.append(pd.DataFrame(data={
-                            'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t],
-                            'Tmax': Tmax, 'beta': beta, 'alpha': alpha,
-                            'p0': p0, 'waviness': waviness, 'ctol_abs': ctol_abs,
-                            'ctol_rel': ctol_rel, 'ptol': ptol, 'zeroLtol': zeroLtol,
-                            'time': conv_time, 'step': Nsteps,
-                            'conv_condition': conv_condition,  'clamp': True},
-                            index=[0]),ignore_index = True)
-            
-    metrics_conv = metrics_conv.append(these_metrics_conv, ignore_index = True)
-    dist_conv = dist_conv.append(these_dist_conv, ignore_index = True)
-    
-    return metrics_conv, dist_conv

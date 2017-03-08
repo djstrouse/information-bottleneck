@@ -10,287 +10,111 @@ def test_IB(pxy,compact=1):
     
     # do IB
     return IB(pxy,fit_param,compact)
-               
-def best_beta(pxy,compact=1):   
-    """just uses beta=.6*H(X)/I(X,Y) as attempt to hit knee of IB curve"""
-    # set up fit param
-    pxy, px, py_x, hx, hy, hy_x, ixy, X, Y, zx, zy = process_pxy(pxy)
-    fit_param = pd.DataFrame(data={'alpha': [0.,1.]})
-    fit_param['betas'] = .6*hx/ixy # proposed beta that will pick out best number of clusters
-    fit_param['beta_search'] = False
-    
-    # do IB
-    return IB(pxy,fit_param,compact)
-     
-def test_p0_pos(pxy,compact=1): 
-    # set up fit param
-    fit_param1 = pd.DataFrame(data={'alpha': [0.]})
-    fit_param2 = pd.DataFrame(columns=['alpha','p0'])
-    fit_param2['p0'] = [.99,.95,.9,.75,.5,.25,.1,.05,0]
-    fit_param2['alpha'] = 1.
-    fit_param = fit_param1.append(fit_param2)
-    
-    # do IB
-    return IB(pxy,fit_param,compact)
-               
-def test_p0_neg(pxy,compact=1): 
-    # set up fit param
-    fit_param1 = pd.DataFrame(data={'alpha': [0.]})
-    fit_param2 = pd.DataFrame(columns=['alpha','p0'])
-    fit_param2['p0'] = [-.05,-.1,-.25,-.5,-.75,-.9,-.95,-.99]
-    fit_param2['alpha'] = 1.
-    fit_param = fit_param1.append(fit_param2)
-    
-    # do IB
-    return IB(pxy,fit_param,compact)
 
-def test_ctol(pxy,compact=1):
-    # set up fit param
-    ctols = np.logspace(-4,-1,num=4)
-    fit_param1 = pd.DataFrame(columns=['alpha','ctol_rel'])
-    fit_param1['ctol_rel'] = ctols
-    fit_param1['alpha'] = 0.
-    fit_param2 = pd.DataFrame(columns=['alpha','ctol_rel'])
-    fit_param2['ctol_rel'] = ctols
-    fit_param2['alpha'] = 1.
-    fit_param = fit_param1.append(fit_param2)
-    
-    # do IB
-    return IB(pxy,fit_param,compact)
-               
-def test_zeroLtol(pxy,compact=1):
+def test_geo(pxy,compact=1):
     
     # set up fit param
-    zeroLtols = np.logspace(-2,1,num=7)
-    fit_param1 = pd.DataFrame(columns=['alpha','zeroLtol'])
-    fit_param1['zeroLtol'] = zeroLtols
-    fit_param1['alpha'] = 0.
-    fit_param2 = pd.DataFrame(columns=['alpha','zeroLtol'])
-    fit_param2['zeroLtol'] = zeroLtols
-    fit_param2['alpha'] = 1.
-    fit_param = fit_param1.append(fit_param2, ignore_index = True)
+    X = pxy['pxy'].shape[0]
+    fit_param = pd.DataFrame(data={'alpha': [0.,1.], 'Tmax': [X/2,None]})
+    fit_param['geoapprox'] = True
     
-    # do IB
     return IB(pxy,fit_param,compact)
     
-def test_zipf(pxy=0,compact=1):
+def impute_coordinates(dist_conv,pxy):
+    
+    print('Imputing coordinates...')
+    
+    # load data
+    df = dist_conv[dist_conv['alpha']==1] # only process (a)DIB fits
+    dfc = pd.DataFrame(columns=list((set(df.columns.values)-{'qt_x','qt','qy_t','Dxt'}))+['x1','x2','cluster'])
+    coord = pxy['coord']
+
+    # iterate over fits
+    for irow in range(len(df.index)):
+        
+        print('Working on fit %i of %i' % (irow,len(df.index)))
+        
+        # extract results for this fit
+        this_fit = df.iloc[irow]
+        qt_x = this_fit['qt_x']
+        del this_fit['qt_x']
+        del this_fit['qt']
+        del this_fit['qy_t']
+        del this_fit['Dxt']
+        T,X = qt_x.shape
+        
+        # iterate over datapoints
+        for x in range(X):
+            print('Working on data point %i of %i' % (x,X))
+            this_fit['x1'] = coord[x,0]
+            this_fit['x2'] = coord[x,1]
+            this_fit['cluster'] = np.nonzero(qt_x[:,x])[0][0]
+            dfc = dfc.append(this_fit,ignore_index = True)
+            
+    return dfc
+    
+def test_zipf(pxy,compact=1):
     # dumb experiment to remake fig2
-    lambdas = list(np.linspace(0,1,101))[0:-1]
+    lambdas = list(np.linspace(0,1,52))[1:-1]
     betas = [l/(1-l) for l in lambdas]
-    fit_param1 = pd.DataFrame(data={ 'alpha': 0., 'betas': [betas], 'beta_search': False})
+    fit_param = pd.DataFrame(data={'alpha': 0.,
+                                   'betas': [betas],
+                                   'beta_search': False,
+                                   'zeroLtol': 0})
     
     # experiment focused on midpoint lambda=1/2 aka beta=1
-    fit_param2 = pd.DataFrame(data={'waviness': [.01, .02, .05, .1, .25, .5, .7, .9]})
-    fit_param2['alpha'] = 0.
-    fit_param2['betas'] = 1.
-    fit_param2['p0'] = 0.
-    fit_param2['beta_search'] = False
-    fit_param2['repeats'] = 30
+    #fit_param2 = pd.DataFrame(data={'waviness': [.01, .1, .25, .5, .7, .9, None]})
+    #fit_param2['alpha'] = 0.
+    #fit_param2['betas'] = 1.
+    #fit_param2['p0'] = 0.
+    #fit_param2['beta_search'] = False
+    #fit_param2['repeats'] = 30
 
     # combine
-    fit_param = fit_param1.append(fit_param2, ignore_index = True)
+    #fit_param = fit_param1.append(fit_param2, ignore_index = True)
 
     #return fit_param
-    return IB(pxy,fit_param,compact)
+    return IB(pxy,fit_param,compact)  
     
-
-def insert_true_clustering(exp_name,verbose=1):
+def run_experiments(compact=2,folder="",exp_type="",dataset_name="",exp_name="",s=None):
+    """data_set indicates p(x,y) loaded, compact what gets saved,
+    exp_name the name of the saved results, exp_type the fit_param run,
+    and folder the directory within /data/ where the data/results live"""
     cwd = os.getcwd()
-    datapath = cwd+'/data/geometric/'+exp_name+'_'
-    pxy = np.load(datapath+'pxy.npy')
-    groups = np.load(datapath+'groups.npy')
-    pxy, px, py_x, hx, hy, hy_x, ixy, X, Y, zx, zy = process_pxy(pxy)
-    ptol = 10**-8
-    id_conversion = False
-    
-    # hand choose groupings
-    #grouping1 = 30*[1]+60*[0]
-    #grouping2 = 30*[0]+30*[1]+30*[0]
-    #grouping3 = 60*[0]+30*[1]
-    #grouping4 = 30*[0]+30*[1]+30*[2]
-    #groups = [grouping1,grouping2,grouping3,grouping4]
-
-    # convert grouping by Xids to grouping by groupids
-    if id_conversion:
-        G = len(groups)    
-        groups_id = np.zeros((G,X))
-        for g in range(G): # loop over various groupings
-            grouping = groups[g]
-            for g2 in range(len(grouping)): # loop over groups within a grouping
-                group = grouping[g2]   
-                group = [x for x in group if x not in zx]                        
-                groups_id[g,group] = g2
-        groups_id = groups_id.astype(int)
-    else:
-        G = max(groups)
-        groups_id = groups
-    
-    # init dataframe
-    metrics_conv = pd.DataFrame(columns=['T','ht','ht_x','hy_t','ixt','iyt',
-                                              'hx','ixy','alpha',
-                                              'ptol','conv_condition'])
-    if verbose>0:
-        print("****************************** Inserting hand-picked solutions ******************************")
-    
-    # loop over hand-chosen groupings
-    for g in range(G):
-        grouping = groups_id[g,:]
-        # STEP 1: BUILD Q(T|X)
-        T = max(grouping)+1
-        qt_x = np.zeros((T,X))
-        for x in range(X):
-            tstar = grouping[x]
-            qt_x[tstar,x] = 1
-     
-        # STEP 2: UPDATE Q(T)
-        qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)
-            
-        # STEP 3: UPDATE Q(Y|T)
-        qy_t = qy_t_step(qt_x,qt,px,py_x)
-            
-        # calculate and print metrics
-        ht, hy_t, iyt, ht_x, ixt, ignorethisL = calc_IB_metrics(qt_x,qt,qy_t,px,hy,1,1)
-        if verbose>0:
-            print('I(X,T) = %.6f, H(T) = %.6f, H(X) = %.6f, I(Y,T) = %.6f, I(X,Y) = %.6f' % (ixt,ht,hx,iyt,ixy))
-                
-        # store everything
-        metrics_conv = metrics_conv.append(pd.DataFrame(data={
-                        'ixt': ixt, 'iyt': iyt, 'ht': ht,
-                        'T': T, 'ht_x': ht_x, 'hy_t': hy_t,
-                        'hx': hx, 'ixy': ixy,
-                        'ptol': ptol, 'conv_condition': 'hand_picked'},
-                        index=[g]))
-    
-    # save
-    metrics_conv.to_csv(datapath+'metrics_conv_handpicked.csv')
-    
-    return 0   
-    
-def run_experiments(data_set="",compact=2,exp_name="",x=""):
-    """x should be a string subset of m/r/initp/initn/c/zero/b/zipf, compact of 0/1/2."""
-    cwd = os.getcwd()
-    results_path = cwd+'/data/zipf/'+exp_name+'_'
-    dataset_path = cwd+'/data/zipf/'+data_set+'_'
+    results_path = cwd+'/data/'+folder+'/'+exp_name+'_'
+    dataset_path = cwd+'/data/'+folder+'/'+dataset_name+'_'
     compact = int(compact)
-    if "m" in x:
+    if exp_type == "m":
         # make new pxy
-        pxy = gen_zipf_pxy()
-        #np.save(dataset_path+'Xdata',Xdata)
-        #np.save(dataset_path+'groups',groups)
-        np.save(dataset_path+'pxy',pxy)
-    else:
-        # load existing pxy
-        pxy = np.load(dataset_path+'pxy.npy')
-    if "r" in x: # regular experiments
-        metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
-            dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
-            test_IB(pxy,compact)
-        if compact>1:           
-            metrics_conv.to_csv(results_path+'metrics_conv.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw.csv')
-            dist_conv.to_pickle(results_path+'dist_conv.pkl')
-            dist_sw.to_pickle(results_path+'dist_sw.pkl')
-        elif compact>0:
-            metrics_conv.to_csv(results_path+'metrics_conv.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw.csv')
-            dist_conv.to_pickle(results_path+'dist_conv.pkl')
-        else:
-            metrics_conv.to_csv(results_path+'metrics_conv.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw.csv')
-    if "initp" in x: # initialization experiments - positive p0
-        metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
-            dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
-            test_p0_pos(pxy,compact)
-        if compact>1:
-            metrics_conv.to_csv(results_path+'metrics_conv_p0_pos.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw_p0_pos.csv')
-            dist_conv.to_pickle(results_path+'dist_conv_p0_pos.pkl')
-            dist_sw.to_pickle(results_path+'dist_sw_p0_pos.pkl')
-        elif compact>0:
-            metrics_conv.to_csv(results_path+'metrics_conv_p0_pos.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw_p0_pos.csv')
-            dist_conv.to_pickle(results_path+'dist_conv_p0_pos.pkl')
-        else:
-            metrics_conv.to_csv(results_path+'metrics_conv_p0_pos.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw_p0_pos.csv')
-    if "initn" in x: # initialization experiments - negative p0
-        metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
-            dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
-            test_p0_neg(pxy,compact)
-        if compact>1:
-            metrics_conv.to_csv(results_path+'metrics_conv_p0_neg.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw_p0_neg.csv')
-            dist_conv.to_pickle(results_path+'dist_conv_p0_neg.pkl')
-            dist_sw.to_pickle(results_path+'dist_sw_p0_neg.pkl')
-        elif compact>0:
-            metrics_conv.to_csv(results_path+'metrics_conv_p0_neg.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw_p0_neg.csv')
-            dist_conv.to_pickle(results_path+'dist_conv_p0_neg.pkl')
-        else:
-            metrics_conv.to_csv(results_path+'metrics_conv_p0_neg.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw_p0_neg.csv')
-    if "c" in x: # convergence tolerance experiments
-        metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
-            dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
-            test_ctol(pxy,compact)
-        if compact>1:
-            metrics_conv.to_csv(results_path+'metrics_conv_ctol.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw_ctol.csv')
-            dist_conv.to_pickle(results_path+'dist_conv_ctol.pkl')
-            dist_sw.to_pickle(results_path+'dist_sw_ctol.pkl')
-        elif compact>0:
-            metrics_conv.to_csv(results_path+'metrics_conv_ctol.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw_ctol.csv')
-            dist_conv.to_pickle(results_path+'dist_conv_ctol.pkl')
-        else:
-            metrics_conv.to_csv(results_path+'metrics_conv_ctol.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw_ctol.csv')
-    if "zero" in x: # zeroL tolerance experiments
-        metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
-            dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
-            test_zeroLtol(pxy,compact)
-        if compact>1:
-            metrics_conv.to_csv(results_path+'metrics_conv_zeroLtol.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw_zeroLtol.csv')
-            dist_conv.to_pickle(results_path+'dist_conv_zeroLtol.pkl')
-            dist_sw.to_pickle(results_path+'dist_sw_zeroLtol.pkl')
-        elif compact>0:
-            metrics_conv.to_csv(results_path+'metrics_conv_zeroLtol.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw_zeroLtol.csv')
-            dist_conv.to_pickle(results_path+'dist_conv_zeroLtol.pkl')
-        else:
-            metrics_conv.to_csv(results_path+'metrics_conv_zeroLtol.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw_zeroLtol.csv')
-    if "b" in x: # trying proposed optimal beta
-        metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
-            dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
-            best_beta(pxy,compact)
-        if compact>1:
-            metrics_conv.to_csv(results_path+'metrics_conv_bestbeta.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw_bestbeta.csv')
-            dist_conv.to_pickle(results_path+'dist_conv_bestbeta.pkl')
-            dist_sw.to_pickle(results_path+'dist_sw_bestbeta.pkl')
-        elif compact>0:
-            metrics_conv.to_csv(results_path+'metrics_conv_bestbeta.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw_bestbeta.csv')
-            dist_conv.to_pickle(results_path+'dist_conv_bestbeta.pkl')
-        else:
-            metrics_conv.to_csv(results_path+'metrics_conv_bestbeta.csv')
-            metrics_sw.to_csv(results_path+'metrics_sw_bestbeta.csv')
-    if "zipf" in x: # zipf experiments
+        dataset = gen_3_even_sph_wellsep() # contains coord and label
+        np.save(dataset_path+'coord',dataset)
+        return
+    if exp_type == "zipf": # zipf experiments
+        print('Running zipf experiments...')
         metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
             dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
             test_zipf(pxy,compact)
-        if compact>1:
-            metrics_conv_allreps.to_csv(results_path+'metrics_conv_zipf.csv')
-            metrics_sw_allreps.to_csv(results_path+'metrics_sw_zipf.csv')
-            dist_conv_allreps.to_pickle(results_path+'dist_conv_zipf.pkl')
-            dist_sw_allreps.to_pickle(results_path+'dist_sw_zipf.pkl')
-        elif compact>0:
-            metrics_conv_allreps.to_csv(results_path+'metrics_conv_zipf.csv')
-            metrics_sw_allreps.to_csv(results_path+'metrics_sw_zipf.csv')
-            dist_conv_allreps.to_pickle(results_path+'dist_conv_zipf.pkl')
-        else:
-            metrics_conv_allreps.to_csv(results_path+'metrics_conv_zipf.csv')
-            metrics_sw_allreps.to_csv(results_path+'metrics_sw_zipf.csv')
+    if exp_type == "geo": # geometric experiments
+        print('Running geometric experiments...')
+        dataset = np.load(dataset_path+'coord.npy').item()
+        dataset['s'] = s
+        dataset['pxy'] = coord_to_pxy(dataset['coord'],s)
+        np.save(dataset_path+'dataset_s'+str(s).replace('.','p'),dataset)
+        metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
+            dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
+            test_geo(dataset,compact)
+        clusters_conv = impute_coordinates(dist_conv,pxy)
+        clusters_conv.to_pickle(results_path+'clusters_conv.pkl')
+    if compact>1:
+        metrics_conv_allreps.to_csv(results_path+'metrics_conv.csv')
+        metrics_sw_allreps.to_csv(results_path+'metrics_sw.csv')
+        dist_conv_allreps.to_pickle(results_path+'dist_conv.pkl')
+        dist_sw_allreps.to_pickle(results_path+'dist_sw.pkl')
+    elif compact>0:
+        metrics_conv_allreps.to_csv(results_path+'metrics_conv.csv')
+        metrics_sw_allreps.to_csv(results_path+'metrics_sw.csv')
+        dist_conv_allreps.to_pickle(results_path+'dist_conv.pkl')
+    else:
+        metrics_conv_allreps.to_csv(results_path+'metrics_conv.csv')
+        metrics_sw_allreps.to_csv(results_path+'metrics_sw.csv')
     return

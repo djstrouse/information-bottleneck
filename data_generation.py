@@ -1,12 +1,35 @@
 from IB import *
 import matplotlib.pyplot as plt
 import os
+import numpy as np
 
 def gen_zipf_pxy():
-    X = 150
+    X = 1024
     Y = X
     pxy = np.eye(X)
     pxy = pxy/np.sum(pxy[:])
+    return pxy
+    
+def gen_blurred_diag_pxy(s):
+    X = 1024
+    Y = X
+
+    # generate pdf
+    from scipy.stats import multivariate_normal
+    pxy = np.zeros((X,Y))
+    rv = multivariate_normal(cov=s)
+    for x in range(X):        
+        pxy[x,:] = np.roll(rv.pdf(np.linspace(-X/2,X/2,X+1)[:-1]),int(X/2+x))
+    pxy = pxy/np.sum(pxy)
+        
+    # plot p(x,y)
+    import matplotlib.pyplot as plt
+    plt.figure()
+    plt.contourf(pxy)
+    plt.ion()
+    plt.title("p(x,y)")
+    plt.show()
+    
     return pxy
 
 def gen_dir_pxy():
@@ -264,54 +287,36 @@ def plot_pxy(exp_name):
     
     return 0
     
-def gen_geometric_pxy():
-        
-    # set all parameters    
-    mu1 = np.array([0,0])
-    sig1 = 1
-    mu2 = np.array([8,3])
-    sig2 = 1
-    mu3 = np.array([0,10])
-    sig3 = 1
-    samp_per_comp = 30
-    groups = np.array([0]*samp_per_comp+
-                        [1]*samp_per_comp+
-                        [2]*samp_per_comp)
-    nbins_y1 = 50 # number of bins in 1st dimension
-    nbins_y2 = 50
-    s = 1 # spatial scale of gaussian smoothing
+def coord_to_pxy(coord,s,bins_per_dim=50):
+    # assumes 2D coord
+    
+    print('Smoothing coordinates with scale %.2f into p(x,y)' % s)
+    
     pad = 2*s # max distance from data points for bins
     
-    # generate coordinates of data points
-    X = int(3*samp_per_comp)
-    Xdata = np.r_[sig1*np.random.randn(samp_per_comp,2)+mu1,
-                   sig2*np.random.randn(samp_per_comp,2)+mu2,
-                   sig3*np.random.randn(samp_per_comp,2)+mu3]
-    X = Xdata.shape[0]
-    
-    # plot coordinates
-    plt.scatter(Xdata[:,0],Xdata[:,1])
-    plt.show()
+    # dimensional preprocessing
+    X = coord.shape[0]
+    Ymax = int(bins_per_dim**2)   
+    Y = Ymax
+    min_x1 = np.min(coord[:,0])
+    min_x2 = np.min(coord[:,1])
+    max_x1 = np.max(coord[:,0])
+    max_x2 = np.max(coord[:,1])
     
     # generate bins and construct gaussian-smoothed p(y|x)
-    Y = int(nbins_y1*nbins_y2)
-    min_x1 = np.min(Xdata[:,0])
-    min_x2 = np.min(Xdata[:,1])
-    max_x1 = np.max(Xdata[:,0])
-    max_x2 = np.max(Xdata[:,1])
     min_y1 = min_x1-pad
     max_y1 = max_x1+pad
     min_y2 = min_x2-pad
     max_y2 = max_x2+pad
-    y1 = np.linspace(min_y1,max_y1,nbins_y1)
-    y2 = np.linspace(min_y2,max_y2,nbins_y2)
+    y1 = np.linspace(min_y1,max_y1,bins_per_dim)
+    y2 = np.linspace(min_y2,max_y2,bins_per_dim)
     y1v,y2v = np.meshgrid(y1,y2)
     Ygrid = np.array([np.reshape(y1v,Y),np.reshape(y2v,Y)]).T    
     py_x = np.zeros((Y,X))
     y_count_near = np.zeros(Y) # counts data points within pad of each bin
     for x in range(X):
         for y in range(Y):
-            l = np.linalg.norm(Xdata[x,:]-Ygrid[y,:])
+            l = np.linalg.norm(coord[x,:]-Ygrid[y,:])
             py_x[y,x] = (1./math.sqrt(2*math.pi*(s**(2*2))))*math.exp(-(1./(2.*(s**2)))*l)
             if l<pad:
                 y_count_near[y] += 1
@@ -337,5 +342,29 @@ def gen_geometric_pxy():
     # calc and display I(x,y)
     pxy2, px2, py_x2, hx, hy, hy_x, ixy, X2, Y2, zx, zy = process_pxy(pxy,0)
     print("I(X;Y) = %.3f" % ixy)
+    
+    return pxy
+    
+def gen_3_even_sph_wellsep():
+            
+    # set all parameters    
+    mu1 = np.array([0,0])
+    sig1 = 1
+    mu2 = np.array([8,3])
+    sig2 = 1
+    mu3 = np.array([0,10])
+    sig3 = 1
+    samp_per_comp = 30
+    labels = np.array([0]*samp_per_comp+[1]*samp_per_comp+[2]*samp_per_comp)
+    
+    
+    # generate coordinates of data points
+    coord = np.r_[sig1*np.random.randn(samp_per_comp,2)+mu1,
+                  sig2*np.random.randn(samp_per_comp,2)+mu2,
+                  sig3*np.random.randn(samp_per_comp,2)+mu3]
+    
+    # plot coordinates
+    plt.scatter(coord[:,0],coord[:,1])
+    plt.show()
         
-    return pxy, Xdata, groups
+    return {'coord': coord, 'labels': labels}
