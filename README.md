@@ -12,7 +12,7 @@ FILES
 2) data_generation.py includes some example functions to generate synthetic data for the IB. This is just to help you get off the ground quickly, but you probably want to run the IB on your own data.
 3) example_experiments.py includes some example files written to run IB experiments, for illustrative purposes.
 
-RUNNING IB WITH A SINGLE SET OF PARAMETER SETTINGS
+DIRECTIONS
 
 If all you want to do is run IB with a specific alpha and beta, then see the first example in example_experiments.py. This task uses the model and dataset classes defined in IB.py.
 
