@@ -2,14 +2,42 @@ from IB import *
 from data_generation import *
 import os
 
-def test_IB(pxy,compact=1):   
-    """Just runs IB and DIB with default parameters."""
-    # set up fit param
-    fit_param = pd.DataFrame(data={'alpha': [0.,1.]})
-    fit_param['repeats'] = 2
+def test_IB_single():   
     
-    # do IB
-    return IB(pxy,fit_param,compact)
+    # load data
+    ds = dataset(name='easytest')
+    ds.load(os.getcwd()+'/data/geometric/')
+    ds.s = 1.
+    ds.coord_to_pxy()
+    ds.plot_pxy()
+
+    # init model
+    m = model(ds=ds,alpha=1,beta=5)
+    
+    # fit model
+    m.fit(keep_steps=True)
+    
+    return m
+
+def test_IB():
+    
+    # load data
+    ds = dataset(name='easytest')
+    ds.load(os.getcwd()+'/data/geometric/')
+    ds.s = 1.
+    ds.coord_to_pxy()
+    ds.plot_pxy()
+    
+    # set up fit param
+    fit_param = pd.DataFrame(data={'alpha': [1,0]})
+    fit_param['repeats'] = 3
+    
+    # fit models
+    metrics_conv, dist_conv, metrics_sw, dist_sw = IB(ds,fit_param)
+    
+    return metrics_conv, dist_conv, metrics_sw, dist_sw
+
+# CODE BELOW NEEDS UPDATED TO WORK WITH NEW CLASSES
 
 def test_geo(pxy,compact=1):
     
@@ -20,14 +48,13 @@ def test_geo(pxy,compact=1):
     
     return IB(pxy,fit_param,compact)
     
-def impute_coordinates(dist_conv,pxy):
+def impute_coordinates(dist_conv,coord):
     
     print('Imputing coordinates...')
     
     # load data
-    df = dist_conv[dist_conv['alpha']==1] # only process (a)DIB fits
+    df = dist_conv[(dist_conv['alpha']==0) | (dist_conv['clamp']==True)] # only process (a)DIB fits and *clamped* (a)IB fits
     dfc = pd.DataFrame(columns=list((set(df.columns.values)-{'qt_x','qt','qy_t','Dxt'}))+['x1','x2','cluster'])
-    coord = pxy['coord']
 
     # iterate over fits
     for irow in range(len(df.index)):
@@ -84,9 +111,9 @@ def run_experiments(compact=2,folder="",exp_type="",dataset_name="",exp_name="",
     results_path = cwd+'/data/'+folder+'/'+exp_name+'_'
     dataset_path = cwd+'/data/'+folder+'/'+dataset_name+'_'
     compact = int(compact)
-    if exp_type == "m":
+    if "gen" in exp_type:
         # make new pxy
-        dataset = gen_3_even_sph_wellsep() # contains coord and label
+        dataset = eval(exp_type+'()') # contains coord and label
         np.save(dataset_path+'coord',dataset)
         return
     if exp_type == "zipf": # zipf experiments
@@ -98,13 +125,13 @@ def run_experiments(compact=2,folder="",exp_type="",dataset_name="",exp_name="",
         print('Running geometric experiments...')
         dataset = np.load(dataset_path+'coord.npy').item()
         dataset['s'] = s
-        dataset['pxy'] = coord_to_pxy(dataset['coord'],s)
+        dataset['pxy'] = coord_to_pxy(dataset['coord'],s,plot=False)
         np.save(dataset_path+'dataset_s'+str(s).replace('.','p'),dataset)
         metrics_sw, dist_sw, metrics_conv, dist_conv, metrics_sw_allreps,\
             dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps = \
             test_geo(dataset,compact)
-        clusters_conv = impute_coordinates(dist_conv,pxy)
-        clusters_conv.to_pickle(results_path+'clusters_conv.pkl')
+        clusters_conv = impute_coordinates(dist_conv,dataset['coord'])
+        clusters_conv.to_csv(results_path+'clusters_conv.csv')
     if compact>1:
         metrics_conv_allreps.to_csv(results_path+'metrics_conv.csv')
         metrics_sw_allreps.to_csv(results_path+'metrics_sw.csv')

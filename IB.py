@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 import time
 import math
+import pickle
 vlog = np.vectorize(math.log)
 vexp = np.vectorize(math.exp)
 
@@ -9,66 +11,13 @@ vexp = np.vectorize(math.exp)
 # conditioning, so read _ as |.
 
 # todos:
-#   OOP it all, starting with dataset
+#   update documentation for OOP version
 #   fold smoothing into IB so that s is a parameter
-#   draw IB curve during fits
+#   implement non-spherical smoothing into dataset class
 #   function to plot geometric clustering solutions (i.e. color points in coord plane)
+#   allow refine_beta parameters to be set by model.fit()
+#   draw IB curve during fits
 
-def verify_inputs(pxy,beta,alpha,qt_x,Tmax,p0,waviness,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,geoapprox,compact,verbose):
-    """Helper function for IB which checks for validity of input parameters."""
-    if not(isinstance(geoapprox,bool)):
-        raise ValueError('geoapprox must be a boolean')
-    if geoapprox:
-        if not(isinstance(pxy,dict)):
-            raise ValueError('When geoapprox = True, pxy must be a dictionary')
-        coord = pxy['coord']
-        s = pxy['s']
-        pxy = pxy['pxy']
-        if not(isinstance(coord,np.ndarray)):
-            raise ValueError('coord (in pxy dict) must be a numpy array')
-        if not(isinstance(s,(int,float))) and s>0:
-            raise ValueError('s (in pxy dict) must be a positive scalar')
-    if not(isinstance(pxy,np.ndarray)):
-        raise ValueError('pxy must be a numpy array')
-    if np.any(pxy<0) or np.any(pxy>1):
-        raise ValueError('entries of pxy must be between 0 and 1')
-    if abs(np.sum(pxy)-1)>ptol:
-        raise ValueError('pxy must be normalized')
-    if not(beta>0) or not(isinstance(beta,(int,float,np.int64))):
-        raise ValueError('beta must be a positive scalar')
-    if alpha<0 or not(isinstance(alpha,(int,float,np.int64))):
-        raise ValueError('alpha must be a non-negative scalar')
-    if not(isinstance(qt_x,np.ndarray)) and qt_x is not None:
-        raise ValueError('qt_x must be a numpy array')
-    if isinstance(qt_x,np.ndarray):
-        if np.any(qt_x<0) or np.any(qt_x>1):
-            raise ValueError('entries of qt_x must be between 0 and 1')
-        if any(abs(np.sum(qt_x,axis=0)-1)>ptol):
-            raise ValueError('columns of qt_x must be normalized')
-    if Tmax is not None and (not(isinstance(Tmax,(int,float))) or Tmax<1):
-        raise ValueError('Tmax must be a positive integer (or None)')
-    if p0 is not None and (p0<-1 or p0>1 or not(isinstance(p0,(int,float)))):
-        raise ValueError('p0 must be a float/int between -1 and 1')
-    if waviness is not None and (waviness<0 or waviness>1 or not(isinstance(waviness,float))):
-        raise ValueError('waviness must be a float between 0 and 1')
-    if not(ctol_abs>=0) or not(isinstance(ctol_abs,float)):
-        raise ValueError('ctol_abs must be a non-negative float')        
-    if not(ctol_rel>=0) or not(isinstance(ctol_rel,float)):
-        raise ValueError('ctol_rel must be a non-negative float')
-    if (ctol_rel==0) and (ctol_abs==0):
-        raise ValueError('One of ctol_rel and ctol_abs must be postive')        
-    if not(ptol>0) or not(isinstance(ptol,float)):
-        raise ValueError('ptol must be a positive float')
-    if zeroLtol<0:
-        raise ValueError('zeroLtol must be positive')
-    if not(isinstance(clamp,(bool,np.bool_))):
-        raise ValueError('clamp must be a boolean')
-    if not(verbose in (0,1,2)):
-        raise ValueError('verbose should be 0, 1, or 2')
-    if not(compact in (0,1,2)):
-        raise ValueError('compact should be 0, 1, or 2')
-    return 0
-    
 def entropy_term(x):
     """Helper function for entropy_single: calculates one term in the sum."""
     if x==0: return 0.0
@@ -92,39 +41,6 @@ def entropy(P):
         for n in range(N):
             H[n] = entropy_single(P[:,n])
         return H
-
-def process_pxy(pxy,verbose=1):
-    """Helper function for IB that preprocesses p(x,y) and computes metrics."""
-    if pxy.dtype!='float': pxy = pxy.astype(float)
-    Xorig = pxy.shape[0]
-    Yorig = pxy.shape[1]
-    px = pxy.sum(axis=1)
-    py = pxy.sum(axis=0)
-    nzx = px>0 # find nonzero-prob entries
-    nzy = py>0
-    zx = np.where(px<=0)
-    zx = zx[0]
-    zy = np.where(py<=0)
-    zy = zy[0]
-    px = px[nzx] # drop zero-prob entries
-    py = py[nzy]
-    X = len(px)
-    Y = len(py)
-    if verbose>0 and (Xorig-X)>0:
-        print('%i of %i Xs dropped due to zero prob; size now %i. Dropped IDs:' % (Xorig-X,Xorig,X))
-        print(zx)
-    if verbose>0 and (Yorig-Y)>0:
-        print('%i of %i Ys dropped due to zero prob; size now %i. Dropped IDs:' % (Yorig-Y,Yorig,Y))
-        print(zy)
-    pxy_orig = pxy
-    tmp = pxy_orig[nzx,:]
-    pxy = tmp[:,nzy] # pxy_orig with zero-prob x,y removed
-    py_x = np.multiply(pxy.T,np.tile(1./px,(Y,1)))
-    hx = entropy(px)
-    hy = entropy(py)
-    hy_x = np.dot(px,entropy(py_x))
-    ixy = hy-hy_x
-    return pxy, px, py_x, hx, hy, hy_x, ixy, X, Y, zx, zy
 
 def kl_term(x,y):
     """Helper function for kl: calculates one term in the sum."""
@@ -169,444 +85,584 @@ def kl(P,Q):
             for l in range(L):
                 DKL[n,l] = kl_single(P[:,n],Q[:,l])
     return DKL
-    
-def qt_step(qt_x,px,ptol,verbose):
-    """Peforms q(t) update step for generalized Information Bottleneck."""
-    T,X = qt_x.shape   
-    qt = np.dot(qt_x,px)
-    dropped = qt<=ptol # clusters to drop due to near-zero prob
-    if any(dropped):
-        qt = qt[~dropped] # drop ununsed clusters
-        qt_x = qt_x[~dropped,:]
-        T = len(qt) # update number of clusters
-        qt_x = np.multiply(qt_x,np.tile(1./np.sum(qt_x,axis=0),(T,1))) # renormalize
-        qt = np.dot(qt_x,px)
-        if verbose==2: print('%i cluster(s) dropped. Down to %i cluster(s).' % (np.sum(dropped),T)) 
-    return qt_x,qt,T
-    
-def qy_t_step(qt_x,qt,px,py_x):
-    """Peforms q(y|t) update step for generalized Information Bottleneck."""
-    return np.dot(py_x,np.multiply(qt_x,np.outer(1./qt,px)).T)    
 
-def qt_x_step(qt,py_x,qy_t,alpha,beta):
-    """Peforms q(t|x) update step for generalized Information Bottleneck."""
-    T,X = len(qt),py_x.shape[1]
-    if T==1: qt_x = np.ones((1,X))
-    else:
-        qt_x = np.zeros((T,X))
-        for x in range(X):
-            l = vlog(qt)-beta*kl(py_x[:,x],qy_t) # [=] T x 1 # scales like X*Y*T
-            if alpha==0: qt_x[np.argmax(l),x] = 1
-            else: qt_x[:,x] = vexp(l/alpha)/np.sum(vexp(l/alpha)) # note: l/alpha<-745 is where underflow creeps in
-    return qt_x
+class dataset:
     
-def build_dist_mat(qt_x,qt,coord):
-    """Replaces the qy_t_step when using geoapprox."""
-    T,X = qt_x.shape
-    Dxt = np.zeros((X,T))
-    for x in range(X):
-        for t in range(T):
-            for otherx in np.nditer(np.nonzero(qt_x[t,:])): # only iterate over x with nonzero involvement
-                Dxt[x,t] += qt_x[t,otherx]*np.linalg.norm(coord[x,:]-coord[otherx,:])**2
-            Dxt[x,t] *= 1/(X*qt[t])
-    return Dxt
-    
-def qt_x_step_geoapprox(qt,Dxt,s,alpha,beta):
-    """Peforms q(t|x) update step for approximate generalized Information
-    Bottleneck, an algorithm for geometric clustering."""
-    X,T = Dxt.shape
-    if T==1: qt_x = np.ones((1,X))
-    else:
-        qt_x = np.zeros((T,X))
-        for x in range(X):            
-            l = vlog(qt)-(beta/(2*s**2))*Dxt[x,:] # only substantive difference from qt_x_step         
-            if alpha==0: qt_x[np.argmax(l),x] = 1
-            else: qt_x[:,x] = vexp(l/alpha)/np.sum(vexp(l/alpha)) # note: l/alpha<-745 is where underflow creeps in
-    return qt_x
-    
-def init_qt_x(alpha,X,T,p0,waviness):
-    """Initializes q(t|x) for generalized Information Bottleneck.
-    
-    For p0 = 0: init is random noise. If waviness = None, normalized uniform
-    random vector. Otherwise, uniform over clusters +- uniform noise of
-    magnitude waviness.
-    
-    For p0 positive: attempt to spread points as evenly across clusters as
-    possible. Prob mass p0 is given to the "assigned" clusters, and the
-    remaining 1-p0 prob mass is randomly assigned. If waviness = None, again
-    use a normalized random vector to assign the remaining mass. Otherwise,
-    uniform +- waviness again.
-    
-    For p0 negative: just as above, except that all data points are "assigned"
-    to the same cluster (well, at least |p0| of their prob mass).""" 
-    if p0==0: # don't insert any peaks; init is all "noise"
-        if waviness: # flat + wavy style noise
-            qt_x = np.ones((T,X))+2*(np.random.rand(T,X)-.5)*waviness # 1+-waviness%                
-            for i in range(X):
-                qt_x[:,i] = qt_x[:,i]/np.sum(qt_x[:,i]) # normalize
-        else: # uniform random vector
-            qt_x = np.random.rand(T,X)
-            qt_x = np.multiply(qt_x,np.tile(1./np.sum(qt_x,axis=0),(T,1))) # renormalize
-    elif p0>0: # spread points evenly across clusters; "assigned" clusters for each data point get prob mass p0
-        if waviness:
-            # insert wavy noise part          
-            qt_x = np.ones((T,X))+2*(np.random.rand(T,X)-.5)*waviness # 1+-waviness%                
-            # choose clusters for each x to get spikes
-            n = math.ceil(float(X)/float(T)) # approx number points per cluster
-            I = np.repeat(np.arange(0,T),n).astype("int") # data-to-cluster assignment vector
-            np.random.shuffle(I)
-            for i in range(X):
-                qt_x[I[i],i] = 0 # zero out that cluster
-                qt_x[:,i] = (1-p0)*qt_x[:,i]/np.sum(qt_x[:,i]) # normalize others to 1-p0
-                qt_x[I[i],i] = p0 # insert p0 spike
-        else: # uniform random vector instead of wavy
-            qt_x = np.zeros((T,X))
-            # choose clusters for each x to get spikes
-            n = math.ceil(float(X)/float(T)) # approx number points per cluster
-            I = np.repeat(np.arange(0,T),n).astype("int") # data-to-cluster assignment vector
-            np.random.shuffle(I)
-            for i in range(X):
-                u = np.random.rand(T)
-                u[I[i]] = 0
-                u = (1-p0)*u/np.sum(u)
-                u[I[i]] = p0
-                qt_x[:,i] = u
-    else: # put all points in the same cluster; primary cluster gets prob mass |p0|
-        p0 = -p0
-        if waviness:      
-            qt_x = np.ones((T,X))+2*(np.random.rand(T,X)-.5)*waviness # 1+-waviness%
-            t = np.random.randint(T) # pick cluster to get delta spike
-            qt_x[t,:] = np.zeros((1,X)) # zero out that cluster
-            qt_x = np.multiply(qt_x,np.tile(1./np.sum(qt_x,axis=0),(T,1))) # normalize the rest...
-            qt_x = (1-p0)*qt_x # ...to 1-p0
-            qt_x[t,:] = p0*np.ones((1,X)) # put in delta spike
-        else: # uniform random vector instead of wavy
-            qt_x = np.zeros((T,X))
-            # choose clusters for each x to get spikes
-            t = np.random.randint(T) # pick cluster to get delta spike
-            for i in range(X):
-                u = np.random.rand(T)
-                u[t] = 0
-                u = (1-p0)*u/np.sum(u)
-                u[t] = p0
-                qt_x[:,i] = u                
-    return qt_x
-    
-def calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta):
-    """Calculates IB performance metrics."""
-    ht = entropy(qt)
-    hy_t = np.dot(qt,entropy(qy_t))
-    iyt = hy-hy_t
-    ht_x = np.dot(px,entropy(qt_x))
-    ixt = ht-ht_x
-    L = ht-alpha*ht_x-beta*iyt
-    return ht, hy_t, iyt, ht_x, ixt, L 
-    
-def store_sw_metrics(metrics_sw,L,ixt,iyt,ht,T,ht_x,hy_t,time,step):
-    return metrics_sw.append(pd.DataFrame(data={
-                'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T, 'ht_x': ht_x,
-                'hy_t': hy_t, 'time': time, 'step': step},
-                index = [0]), ignore_index = True)
-    
-def store_sw_dist(dist_sw,qt_x,qt,qy_t,Dxt,L,ixt,iyt,ht,T,ht_x,hy_t,time,step):    
-    return dist_sw.append(pd.DataFrame(data={
-                'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t], 'Dxt': [Dxt],
-                'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T, 'ht_x': ht_x,
-                'hy_t': hy_t, 'time': time, 'step': step},
-                index = [0]), ignore_index = True)   
-    
-def metrics_string(ixt,ht,hx,iyt,ixy,L):
-    return 'I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (ixt,ht,hx,iyt,ixy,L)
-    
-def IB_single(pxy,beta,alpha,qt_x=None,Tmax=None,p0=None,waviness=None,ctol_abs=10**-6,ctol_rel=0.,
-              ptol=10**-8,zeroLtol=0,clamp=True,geoapprox=False,compact=1,verbose=2):
-    """Performs a single fit of the generalized Information Bottleneck on the
-    joint distribution p(x,y) for a given beta and alpha.
-    
-    See IB.py function documentation below for more details."""
+    def __init__(self,pxy=None,coord=None,labels=None,gen_param=None,name=None,s=None):
+        if pxy is not None:
+            if not(isinstance(pxy,np.ndarray)):
+                raise ValueError('pxy must be a numpy array')
+            if np.any(pxy<0) or np.any(pxy>1):
+                raise ValueError('entries of pxy must be between 0 and 1')
+            if abs(np.sum(pxy)-1)>10**-8:
+                raise ValueError('pxy must be normalized')
+        self.pxy = pxy # the distribution that (D)IB acts upon
+        if coord is not None:
+            if not(isinstance(coord,np.ndarray)):
+                raise ValueError('coord must be a numpy array')
+        self.coord = coord # locations of data points if geometric, assumed 2D
+        if labels is not None:
+            if len(labels)!=coord.shape[0]:
+                raise ValueError('number of labels must match number of rows in coord')
+        self.labels = labels # class labels of data (if synthetic)
+        if s is not None:
+            if not(isinstance(s,(int,float))) and s>0:
+                raise ValueError('s must be a positive scalar')
+        self.s = s # smoothing parameter for coord->pxy
+        if gen_param is not None:
+            if not(isinstance(gen_param,dict)):
+                raise ValueError('gen_param must be a dictionary')
+        self.gen_param = gen_param # generative parameters of data (if synthetic)
+        self.name = name # name of dataset, used for saving
+        if self.pxy is not None:
+            self.process_pxy()
+        elif self.coord is not None:
+            self.X = self.coord.shape[0]
+        if self.pxy is None and self.coord is not None and self.s is not None:
+            self.coord_to_pxy()
         
-    # PRE-IB STEP INIT AND PROCESSING
-        
-    verify_inputs(pxy,beta,alpha,qt_x,Tmax,p0,waviness,ctol_abs,ctol_rel,ptol,zeroLtol,clamp,geoapprox,compact,verbose)
+    def __str__(self):
+        return(self.name)
     
-    conv_thresh = 1 # steps in a row of small change to consider converged
-    
-    # process inputs
-    if isinstance(alpha,(int,np.int64)): alpha = float(alpha)
-    if isinstance(beta,(int,np.int64)): beta = float(beta)
-    if isinstance(Tmax,float): Tmax = int(Tmax)
-    if p0 is None:
-        if alpha==0: p0 = 1. # DIB default: deterministic init that spreads points evenly across clusters
-        else: p0 = .75 # non-DIB default: DIB-like init but with only 75% prob mass on "assigned" cluster
-    if geoapprox:
-        coord = pxy['coord']
-        s = pxy['s']
-        pxy = pxy['pxy']
-    pxy, px, py_x, hx, hy, hy_x, ixy, X, Y, zx, zy = process_pxy(pxy,verbose)
-    if Tmax is None:
-        Tmax = X
-        if verbose==2: print('Tmax set to %i based on X' % Tmax)
-    elif Tmax>X:
-        if verbose==2: print('Reduced Tmax from %i to %i based on X' % (Tmax,X))
-        Tmax = X
-    else: Tmax = int(Tmax)
-    if qt_x is not None: # init set, so init-related variables don't matter
-        p0 = None
-        waviness = None
-        
-    # report
-    if verbose>0:
-        print('***************************************************** Beginning IB fit with the following parameters *****************************************************')
-        if Tmax is None: Tmax_str = 'None'
-        else: Tmax_str = '%i' % Tmax
-        if p0 is None: p0_str = 'None'
-        else: p0_str = '%.3f' % p0
-        if waviness is None: waviness_str = 'None'
-        else: waviness_str = '%.2f' % waviness
-        if qt_x is not None:
-            p0_str = 'N/A'
-            waviness_str = 'N/A'
-        print('alpha = %.2f, beta = %.1f, Tmax = %s, p0 = %s, wav = %s, clamp = %s, geo = %s, ctol_abs = %.0e, ctol_rel = %.0e, ptol = %.0e, zeroLtol = %.0e' %\
-              (alpha, beta, Tmax_str, p0_str, waviness_str, clamp, geoapprox, ctol_abs, ctol_rel, ptol, zeroLtol))
-        print('**********************************************************************************************************************************************************')
-                        
-    # initialize dataframes
-    cols = ['L','ixt','iyt','ht','T','ht_x','hy_t','step','time']
-    metrics_sw = pd.DataFrame(columns=cols)
-    if compact>1: dist_sw = pd.DataFrame(columns=['qt_x','qt','qy_t','Dxt']+cols)
-        
-    # IB STEP ITERATIONS
+    def process_pxy(self):
+        """Drops unused x and y, and calculates info-theoretic stats of pxy."""
+        Xorig, Yorig = self.pxy.shape
+        px = self.pxy.sum(axis=1)
+        py = self.pxy.sum(axis=0)
+        nzx = px>0 # find nonzero-prob entries
+        nzy = py>0
+        zx = np.where(px<=0)[0]
+        zy = np.where(py<=0)[0]
+        self.px = px[nzx] # drop zero-prob entries
+        self.py = py[nzy]
+        self.X = len(px)
+        self.Y = len(py)
+        if (Xorig-self.X)>0:
+            print('%i of %i Xs dropped due to zero prob; size now %i. Dropped IDs:' % (Xorig-self.X,Xorig,self.X))
+            print(zx)
+        if (Yorig-self.Y)>0:
+            print('%i of %i Ys dropped due to zero prob; size now %i. Dropped IDs:' % (Yorig-self.Y,Yorig,self.Y))
+            print(zy)
+        pxy_orig = self.pxy
+        tmp = pxy_orig[nzx,:]
+        self.pxy = tmp[:,nzy] # pxy_orig with zero-prob x,y removed
+        self.py_x = np.multiply(self.pxy.T,np.tile(1./self.px,(self.Y,1)))
+        self.hx = entropy(self.px)
+        self.hy = entropy(self.py)
+        self.hy_x = np.dot(self.px,entropy(self.py_x))
+        self.ixy = self.hy-self.hy_x
 
-    # initialize other stuff
-    T = Tmax
-    step_start_time = time.time()
-    # STEP 0: INITIALIZE
-    # initialize q(t|x)
-    if qt_x is None: qt_x = init_qt_x(alpha,X,T,p0,waviness)
-    qt_x0 = qt_x # save init
-    # initialize q(t) given q(t|x)
-    qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)
-    # initialize q(y|t) given q(t|x) and q(t)
-    qy_t = qy_t_step(qt_x,qt,px,py_x)
-    # initialize distance matrix, if using geoapprox
-    if geoapprox: Dxt = build_dist_mat(qt_x,qt,coord)
-    else: Dxt = None
-    # calculate and print metrics
-    ht, hy_t, iyt, ht_x, ixt, L = calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
-    if verbose==2: print('init: ' + metrics_string(ixt,ht,hx,iyt,ixy,L))
-    step_time = time.time() - step_start_time
-    metrics_sw = store_sw_metrics(metrics_sw,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,step=0)
-    if compact>1: dist_sw = store_sw_dist(dist_sw,qt_x,qt,qy_t,Dxt,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,step=0)
-    
-    # ITERATE STEPS 1-3 TO CONVERGENCE
-    converged = 0
-    Nsteps = 0
-    L_old = L
-    iter_start_time = time.time()
-    if T==1:
-        converged = conv_thresh
-        if verbose>0: print('Converged due to reduction to single cluster')
-        conv_condition = 'single_cluster'
-    else: conv_condition = ''
-    while converged<conv_thresh: 
-        step_start_time = time.time()
-        Nsteps += 1
-        if geoapprox:
-            # STEP 1: UPDATE Q(T|X) USING APPROX
-            qt_x = qt_x_step_geoapprox(qt,Dxt,s,alpha,beta)
-            # STEP 2: UPDATE Q(T)
-            qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)
-            # STEP 3: UPDATE Q(Y|T) AND DISTANCE MATRIX
-            qy_t = qy_t_step(qt_x,qt,px,py_x)
-            Dxt = build_dist_mat(qt_x,qt,coord)
+    def coord_to_pxy(self,total_bins=2500):
+        """Uses smoothing paramters to transform coord into pxy."""
+        # assumes 2D coord, total_bins is approximate
+        
+        print('Smoothing coordinates with scale %.2f into p(x,y)' % self.s)
+        
+        pad = 2*self.s # bins further than this from all data points are dropped
+        
+        # dimensional preprocessing
+        min_x1 = np.min(self.coord[:,0])
+        min_x2 = np.min(self.coord[:,1])
+        max_x1 = np.max(self.coord[:,0])
+        max_x2 = np.max(self.coord[:,1])
+        range_x1 = max_x1-min_x1
+        range_x2 = max_x2-min_x2
+        bins1 = int(math.sqrt(total_bins*range_x1/range_x2)) # divy up bins according to spread of data
+        bins2 = int(math.sqrt(total_bins*range_x2/range_x1))
+        Y = int(bins1*bins2)
+        
+        # generate bins and construct gaussian-smoothed p(y|x)
+        min_y1 = min_x1-pad
+        max_y1 = max_x1+pad
+        min_y2 = min_x2-pad
+        max_y2 = max_x2+pad
+        y1 = np.linspace(min_y1,max_y1,bins1)
+        y2 = np.linspace(min_y2,max_y2,bins2)
+        y1v,y2v = np.meshgrid(y1,y2)
+        Ygrid = np.array([np.reshape(y1v,Y),np.reshape(y2v,Y)]).T    
+        py_x = np.zeros((Y,self.X))
+        y_count_near = np.zeros(Y) # counts data points within pad of each bin
+        for x in range(self.X):
+            for y in range(Y):
+                l = np.linalg.norm(self.coord[x,:]-Ygrid[y,:])
+                py_x[y,x] = (1./math.sqrt(2*math.pi*(self.s**(2*2))))*math.exp(-(1./(2.*(self.s**2)))*l)
+                if l<pad: y_count_near[y] += 1
+            
+        # drop ybins that are too far away from data
+        ymask = y_count_near>0
+        py_x = py_x[ymask,:]
+        print("Dropped %i ybins. Y reduced from %i to %i." % (Y-np.sum(ymask),Y,np.sum(ymask)))
+        self.Y = np.sum(ymask)
+        # normalize p(y|x), since gaussian binned/truncated and bins dropped
+        for x in range(self.X): py_x[:,x] = py_x[:,x]/np.sum(py_x[:,x])
+        self.py_x = py_x
+        # construct p(x,y)
+        self.px = (1/self.X)*np.ones(self.X)    
+        self.pxy = np.multiply(np.tile(self.px,(self.Y,1)),self.py_x).T
+        
+        # calc and display I(x,y)
+        self.process_pxy()
+        print("I(X;Y) = %.3f" % self.ixy)
+        
+    def plot_coord(self):
+        if self.coord is not None:
+            plt.scatter(self.coord[:,0],self.coord[:,1])
+            plt.axis('scaled')
+            plt.show()
         else:
-            # STEP 1: UPDATE Q(T|X)
-            qt_x = qt_x_step(qt,py_x,qy_t,alpha,beta)
-            # STEP 2: UPDATE Q(T)
-            qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)
-            # STEP 3: UPDATE Q(Y|T)
-            qy_t = qy_t_step(qt_x,qt,px,py_x)
-        # calculate and print metrics
-        ht, hy_t, iyt, ht_x, ixt, L = calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
-        if verbose==2: print('step %i: ' % Nsteps + metrics_string(ixt,ht,hx,iyt,ixy,L))
-        # check for convergence
-        L_abs_inc_flag = L>(L_old+ctol_abs)
-        L_rel_inc_flag = L>(L_old+(abs(L_old)*ctol_rel))
+            print("coord not yet defined")
+        
+    def plot_pxy(self):
+        if self.pxy is not None:
+            plt.contourf(self.pxy)
+            plt.show()
+        else:
+            print("pxy not yet defined")
+            
+    def save(self,directory,filename=None):
+        """Pickles dataset in directory with filename."""
+        if filename is None: filename = self.name+'_dataset'
+        with open(directory+filename+'.pkl', 'wb') as output:
+            pickle.dump(self, output, pickle.HIGHEST_PROTOCOL)
+            
+    def load(self,directory,filename=None):
+        """Replaces current content with pickled data in directory with filename."""
+        if filename is None: filename = self.name+'_dataset'
+        with open(directory+filename+'.pkl', 'rb') as input:
+            obj = pickle.load(input)
+        self.__init__(pxy = obj.pxy, coord = obj.coord, labels = obj.labels,
+                      gen_param = obj.gen_param, name = obj.name, s = obj.s)
+            
+class model:
+
+    def __init__(self,ds,alpha,beta,Tmax=None,qt_x=None,p0=None,waviness=None,
+                 ctol_abs=10**-4,ctol_rel=0.,cthresh=1,ptol=10**-8,zeroLtol=0,
+                 geoapprox=False,quiet=False):
+        if not(isinstance(ds,dataset)):
+            raise ValueError('ds must be a dataset')
+        self.ds = ds # dataset
+        if alpha<0 or not(isinstance(alpha,(int,float,np.int64))):
+            raise ValueError('alpha must be a non-negative scalar')
+        else: alpha = float(alpha)
+        self.alpha = alpha
+        if not(beta>0) or not(isinstance(beta,(int,float,np.int64))):
+            raise ValueError('beta must be a positive scalar')
+        else: beta = float(beta)
+        self.beta = beta
+        if Tmax is None:
+            Tmax = ds.X
+            print('Tmax set to %i based on X' % Tmax)
+        elif Tmax<1 or Tmax!=int(Tmax):
+            raise ValueError('Tmax must be a positive integer')
+        elif Tmax>ds.X:            
+            print('Reduced Tmax from %i to %i based on X' % (Tmax,ds.X))
+            Tmax = ds.X
+        else: Tmax = int(Tmax)
+        self.Tmax = Tmax
+        self.T = Tmax
+        if ctol_rel==0 and ctol_abs==0:
+            raise ValueError('One of ctol_rel and ctol_abs must be postive')
+        if ctol_abs<0 or not(isinstance(ctol_abs,float)):
+            raise ValueError('ctol_abs must be a non-negative float')
+        self.ctol_abs = ctol_abs
+        if ctol_rel<0 or not(isinstance(ctol_rel,float)):
+            raise ValueError('ctol_rel must be a non-negative float')
+        self.ctol_rel = ctol_rel
+        if cthresh<1 or cthresh!=int(cthresh):
+            raise ValueError('cthresh must be a positive integer')
+        self.cthresh = cthresh
+        if not(ptol>0) or not(isinstance(ptol,float)):
+            raise ValueError('ptol must be a positive float')
+        self.ptol = ptol
+        if zeroLtol<0:
+            raise ValueError('zeroLtol must be a non-negative float or integer')
+        self.zeroLtol = zeroLtol
+        self.geoapprox = geoapprox
+        self.quiet = quiet
+        self.clamped = False
+        self.conv_time = None
+        self.conv_condition = None
+        self.step = 0
+        if p0 is None:
+            if alpha==0: p0 = 1. # DIB default: deterministic init that spreads points evenly across clusters
+            else: p0 = .75 # non-DIB default: DIB-like init but with only 75% prob mass on "assigned" cluster
+        elif p0<-1 or p0>1 or not(isinstance(p0,(int,float))):
+            raise ValueError('p0 must be a float/int between -1 and 1')
+        else: p0 = float(p0)
+        self.p0 = p0
+        if waviness is not None and (waviness<0 or waviness>1 or not(isinstance(waviness,float))):
+            raise ValueError('waviness must be a float between 0 and 1')
+        self.waviness = waviness
+        start_time = time.time()
+        if qt_x is not None: # use initialization if provided
+            if not(isinstance(qt_x,np.ndarray)):
+                raise ValueError('qt_x must be a numpy array')
+            if isinstance(qt_x,np.ndarray):
+                if np.any(qt_x<0) or np.any(qt_x>1):
+                    raise ValueError('entries of qt_x must be between 0 and 1')
+                if any(abs(np.sum(qt_x,axis=0)-1)>ptol):
+                    raise ValueError('columns of qt_x must be normalized')
+            self.qt_x = qt_x
+            self.T = qt_x.shape[0]
+        else: # initialize randomly if not
+            self.init_qt_x()
+        self.make_step(init=True)
+        if self.geoapprox: self.qy_t = None
+        else: self.Dxt = None
+        self.step_time = time.time()-start_time
+        if not(self.quiet): print('init: ' + self.report_metrics())
+    
+    def init_qt_x(self):
+        """Initializes q(t|x) for generalized Information Bottleneck.
+        
+        For p0 = 0: init is random noise. If waviness = None, normalized uniform
+        random vector. Otherwise, uniform over clusters +- uniform noise of
+        magnitude waviness.
+        
+        For p0 positive: attempt to spread points as evenly across clusters as
+        possible. Prob mass p0 is given to the "assigned" clusters, and the
+        remaining 1-p0 prob mass is randomly assigned. If waviness = None, again
+        use a normalized random vector to assign the remaining mass. Otherwise,
+        uniform +- waviness again.
+        
+        For p0 negative: just as above, except that all data points are "assigned"
+        to the same cluster (well, at least |p0| of their prob mass).""" 
+        if self.p0==0: # don't insert any peaks; init is all "noise"
+            if self.waviness: # flat + wavy style noise
+                self.qt_x = np.ones((self.T,self.ds.X))+2*(np.random.rand(self.T,self.ds.X)-.5)*self.waviness # 1+-waviness%                
+                for i in range(self.ds.X):
+                    self.qt_x[:,i] = self.qt_x[:,i]/np.sum(self.qt_x[:,i]) # normalize
+            else: # uniform random vector
+                self.qt_x = np.random.rand(self.T,self.ds.X)
+                self.qt_x = np.multiply(self.qt_x,np.tile(1./np.sum(self.qt_x,axis=0),(self.T,1))) # renormalize
+        elif self.p0>0: # spread points evenly across clusters; "assigned" clusters for each data point get prob mass p0
+            if self.waviness:
+                # insert wavy noise part          
+                self.qt_x = np.ones((self.T,self.ds.X))+2*(np.random.rand(self.T,self.ds.X)-.5)*self.waviness # 1+-waviness%                
+                # choose clusters for each x to get spikes
+                n = math.ceil(float(self.ds.X)/float(self.T)) # approx number points per cluster
+                I = np.repeat(np.arange(0,self.T),n).astype("int") # data-to-cluster assignment vector
+                np.random.shuffle(I)
+                for i in range(self.ds.X):
+                    self.qt_x[I[i],i] = 0 # zero out that cluster
+                    self.qt_x[:,i] = (1-self.p0)*self.qt_x[:,i]/np.sum(self.qt_x[:,i]) # normalize others to 1-p0
+                    self.qt_x[I[i],i] = self.p0 # insert p0 spike
+            else: # uniform random vector instead of wavy
+                self.qt_x = np.zeros((self.T,self.ds.X))
+                # choose clusters for each x to get spikes
+                n = math.ceil(float(self.ds.X)/float(self.T)) # approx number points per cluster
+                I = np.repeat(np.arange(0,self.T),n).astype("int") # data-to-cluster assignment vector
+                np.random.shuffle(I)
+                for i in range(self.ds.X):
+                    u = np.random.rand(self.T)
+                    u[I[i]] = 0
+                    u = (1-self.p0)*u/np.sum(u)
+                    u[I[i]] = self.p0
+                    self.qt_x[:,i] = u
+        else: # put all points in the same cluster; primary cluster gets prob mass |p0|
+            p0 = -self.p0
+            if self.waviness:      
+                self.qt_x = np.ones((self.T,self.ds.X))+2*(np.random.rand(self.T,self.ds.X)-.5)*self.waviness # 1+-waviness%
+                t = np.random.randint(self.T) # pick cluster to get delta spike
+                self.qt_x[t,:] = np.zeros((1,self.ds.X)) # zero out that cluster
+                self.qt_x = np.multiply(self.qt_x,np.tile(1./np.sum(self.qt_x,axis=0),(self.T,1))) # normalize the rest...
+                self.qt_x = (1-self.p0)*self.qt_x # ...to 1-p0
+                self.qt_x[t,:] = self.p0*np.ones((1,self.ds.X)) # put in delta spike
+            else: # uniform random vector instead of wavy
+                self.qt_x = np.zeros((self.T,self.ds.X))
+                # choose clusters for each x to get spikes
+                t = np.random.randint(self.T) # pick cluster to get delta spike
+                for i in range(self.ds.X):
+                    u = np.random.rand(self.T)
+                    u[t] = 0
+                    u = (1-self.p0)*u/np.sum(u)
+                    u[t] = self.p0
+                    self.qt_x[:,i] = u                
+    
+    def qt_step(self):
+        """Peforms q(t) update step for generalized Information Bottleneck."""
+        self.qt = np.dot(self.qt_x,self.ds.px)
+        dropped = self.qt<=self.ptol # clusters to drop due to near-zero prob
+        if any(dropped):
+            self.qt = self.qt[~dropped] # drop ununsed clusters
+            self.qt_x = self.qt_x[~dropped,:]
+            self.T = len(self.qt) # update number of clusters
+            self.qt_x = np.multiply(self.qt_x,np.tile(1./np.sum(self.qt_x,axis=0),(self.T,1))) # renormalize
+            self.qt = np.dot(self.qt_x,self.ds.px)
+            if not(self.quiet): print('%i cluster(s) dropped. Down to %i cluster(s).' % (np.sum(dropped),self.T)) 
+        
+    def qy_t_step(self):
+        """Peforms q(y|t) update step for generalized Information Bottleneck."""        
+        self.qy_t = np.dot(self.ds.py_x,np.multiply(self.qt_x,np.outer(1./self.qt,self.ds.px)).T)    
+    
+    def qt_x_step(self):
+        """Peforms q(t|x) update step for generalized Information Bottleneck."""
+        if self.T==1: self.qt_x = np.ones((1,self.X))
+        else:
+            self.qt_x = np.zeros((self.T,self.ds.X))
+            for x in range(self.ds.X):
+                l = vlog(self.qt)-self.beta*kl(self.ds.py_x[:,x],self.qy_t) # [=] T x 1 # scales like X*Y*T
+                if self.alpha==0: self.qt_x[np.argmax(l),x] = 1
+                else: self.qt_x[:,x] = vexp(l/self.alpha)/np.sum(vexp(l/self.alpha)) # note: l/alpha<-745 is where underflow creeps in
+ 
+    def build_dist_mat(self):
+        """Replaces the qy_t_step whens using geoapprox."""
+        self.Dxt = np.zeros((self.ds.X,self.T))
+        for x in range(self.ds.X):
+            for t in range(self.T):
+                for otherx in np.nditer(np.nonzero(self.qt_x[t,:])): # only iterate over x with nonzero involvement
+                    self.Dxt[x,t] += self.qt_x[t,otherx]*np.linalg.norm(self.ds.coord[x,:]-self.ds.coord[otherx,:])**2
+                self.Dxt[x,t] *= 1/(self.ds.X*self.qt[t])
+
+    def qt_x_step_geoapprox(self):
+        """Peforms q(t|x) update step for approximate generalized Information
+        Bottleneck, an algorithm for geometric clustering."""
+        if self.T==1: self.qt_x = np.ones((1,self.ds.X))
+        else:
+            self.qt_x = np.zeros((self.T,self.ds.X))
+            for x in range(self.ds.X):            
+                l = vlog(self.qt)-(self.beta/(2*self.s**2))*self.Dxt[x,:] # only substantive difference from qt_x_step         
+                if self.alpha==0: self.qt_x[np.argmax(l),x] = 1
+                else: self.qt_x[:,x] = vexp(l/self.alpha)/np.sum(vexp(l/self.alpha)) # note: l/alpha<-745 is where underflow creeps in
+
+    def calc_metrics(self):
+        """Calculates IB performance metrics.."""
+        self.ht = entropy(self.qt)
+        self.hy_t = np.dot(self.qt,entropy(self.qy_t))
+        self.iyt = self.ds.hy-self.hy_t
+        self.ht_x = np.dot(self.ds.px,entropy(self.qt_x))
+        self.ixt = self.ht-self.ht_x
+        self.L = self.ht-self.alpha*self.ht_x-self.beta*self.iyt
+        
+    def report_metrics(self):
+        """Returns string of model metrics."""
+        self.calc_metrics()
+        return 'I(X,T) = %.4f, H(T) = %.4f, H(X) = %.4f, I(Y,T) = %.4f, I(X,Y) = %.4f, L = %.4f' % (self.ixt,self.ht,self.ds.hx,self.iyt,self.ds.ixy,self.L)
+
+    def report_param(self):
+        """Returns string of model parameters."""
+        if self.p0 is None or self.qt_x is not None: p0_str = 'None'
+        else: p0_str = '%.3f' % self.p0
+        if self.waviness is None or self.qt_x is not None: waviness_str = 'None'
+        else: waviness_str = '%.2f' % self.waviness
+        return 'alpha = %.2f, beta = %.1f, Tmax = %i, p0 = %s, wav = %s, geo = %s, ctol_abs = %.0e, ctol_rel = %.0e, cthresh = %i, ptol = %.0e, zeroLtol = %.0e' %\
+              (self.alpha, self.beta, self.Tmax, p0_str, waviness_str, self.geoapprox, self.ctol_abs, self.ctol_rel, self.cthresh, self.ptol, self.zeroLtol)
+
+    def make_step(self,init=False):
+        """Performs one IB step."""
+        if not(init):
+            start_time = time.time()
+            if self.geoapprox: self.qt_x_step_geoapprox()
+            else: self.qt_x_step()
+        self.qt_step()
+        if self.geoapprox: self.build_dist_mat()
+        else: self.qy_t_step()
+        self.calc_metrics()
+        self.step += 1
+        if not(init):
+            self.step_time = time.time()-start_time        
+              
+    def clamp(self):
+        """Clamps solution to argmax_t of q(t|x) for each x, i.e. hard clustering."""
+        print('before clamp: ' + self.report_metrics())
+        if self.alpha==0: print('WARNING: clamping with alpha=0; solution is likely already deterministic.')       
+        for x in range(self.ds.X):
+            tstar = np.argmax(self.qt_x[:,x])
+            self.qt_x[tstar,x] = 1
+        self.qt_step()
+        if self.geoapprox: self.build_dist_mat()
+        else: self.qy_t_step()
+        self.clamped = True
+        print('after clamp: ' + self.report_metrics())
+        
+    def panda(self,dist_to_keep=set()):
+        """"Return dataframe of model. If dist, include distributions.
+        If conv, include converged variables; otherwise include stepwise."""
+        df = pd.DataFrame(data={
+                'alpha': self.alpha, 'beta': self.beta, 'step': self.step,
+                'L': self.L, 'ixt': self.ixt, 'iyt': self.iyt, 'ht': self.ht,
+                'T': self.T, 'ht_x': self.ht_x, 'hy_t': self.hy_t,
+                'hx': self.ds.hx, 'ixy': self.ds.ixy, 'Tmax': self.Tmax,
+                'p0': self.p0, 'waviness': self.waviness,  'ptol': self.ptol,
+                'ctol_abs': self.ctol_abs, 'ctol_rel': self.ctol_rel,
+                'cthresh': self.cthresh, 'zeroLtol': self.zeroLtol,
+                'clamped': self.clamped, 'geoapprox': self.geoapprox,
+                'step_time': self.step_time, 'conv_time': self.conv_time,
+                'conv_condition': self.conv_condition}, index = [0])
+        if 'qt_x' in dist_to_keep:
+            df['qt_x'] = [self.qt_x]
+        if 'qt' in dist_to_keep:
+            df['qt'] = [self.qt]
+        if 'qy_t' in dist_to_keep:
+            df['qy_t'] = [self.qy_t]
+        if 'Dxt' in dist_to_keep:
+            df['Dxt'] = [self.Dxt]
+        return df
+
+    def depanda(self,df):
+        """Replaces current model with one in df."""
+        self.alpha = df['alpha'][0]
+        self.beta = df['beta'][0]
+        self.step = df['step'][0]
+        self.L = df['L'][0]
+        self.ixt = df['ixt'][0]
+        self.iyt = df['iyt'][0]
+        self.ht = df['ht'][0]
+        self.T = df['T'][0]
+        self.ht_x = df['ht_x'][0]
+        self.hy_t = df['hy_t'][0]
+        self.hx = df['hx'][0]
+        self.ixy = df['ixy'][0]
+        self.Tmax = df['Tmax'][0]
+        self.p0 = df['p0'][0]
+        self.waviness = df['waviness'][0]
+        self.ptol = df['ptol'][0]
+        self.ctol_abs = df['ctol_abs'][0]
+        self.ctol_rel = df['ctol_rel'][0]
+        self.cthresh = df['cthresh'][0]
+        self.zeroLtol = df['zeroLtol'][0]
+        self.clamped = df['clamped'][0]
+        self.geoapprox = df['geoapprox'][0]        
+        self.step_time = df['step_time'][0]
+        self.conv_time = df['conv_time'][0]
+        self.conv_condition = df['conv_condition'][0]
+        self.qt_x = df['qt_x'][0]
+        self.qt = df['qt'][0]
+        self.qy_t = df['qy_t'][0]
+        self.Dxt = df['Dxt'][0]
+
+    def append_conv_condition(self,cond):        
+        if self.conv_condition is None: self.conv_condition = cond
+        else: self.conv_condition += '_AND_' + cond
+                
+    def update_sw(self):
+        if self.keep_steps:
+            # store stepwise data                
+            self.metrics_sw = self.metrics_sw.append(self.panda(), ignore_index = True)
+            if bool(self.dist_to_keep): self.dist_sw = self.dist_sw.append(self.panda(self.dist_to_keep), ignore_index = True)
+
+    def check_converged(self):
+        """Checks if most recent step triggered convergence, and stores step
+        if necessary."""
+        Lold = self.prev['L'][0] 
         small_changes = False
-        # check for small absolute changes
-        if abs(L_old-L)<ctol_abs:
-            small_changes = True
-            converged += 1
-            if (converged>=conv_thresh):
-                conv_condition = 'small_abs_changes'
-                if verbose>0: print('Converged due to small absolute changes in objective')  
-        # check for small relative changes
-        if (abs(L_old-L)/abs(L_old))<ctol_rel:
-            small_changes = True
-            converged += 1
-            if (converged>=conv_thresh):
-                if len(conv_condition)==0: conv_condition = 'small_rel_changes'
-                else: conv_condition += '_AND_small_rel_changes'
-                if verbose>0: print('Converged due to small relative changes in objective')
-        if not(small_changes): converged = 0 # reset counter of small changes in a row
-        # check for reduction to single cluster        
-        if (T==1) and not(L_abs_inc_flag) and not(L_rel_inc_flag):
-            converged = conv_thresh
-            if verbose>0: print('Converged due to reduction to single cluster')
-            if len(conv_condition)==0: conv_condition = 'single_cluster'
-            else: conv_condition += '_AND_single_cluster'
-        # check for objective becoming NaN
-        if np.isnan(L):
-            converged = conv_thresh
-            if verbose>0: print('Stopped because objective = NaN')
-            if len(conv_condition)==0: conv_condition = 'cost_func_NaN'
-            else: conv_condition += '_AND_cost_func_NaN'
-        # check if obj went up by amount above threshold (after 1st step)
-        if (L_abs_inc_flag or L_rel_inc_flag) and (Nsteps>1): # if so, don't store or count this step!
-            converged = conv_thresh
-            if L_abs_inc_flag:
-                if verbose>0: print('Converged due to absolute increase in objective value')
-                if len(conv_condition)==0: conv_condition = 'cost_func_abs_inc'
-                else: conv_condition += '_AND_cost_func_abs_inc'
-            if L_rel_inc_flag:
-                if verbose>0: print('Converged due to relative increase in objective value')
-                if len(conv_condition)==0: conv_condition = 'cost_func_rel_inc'
-                else: conv_condition += '_AND_cost_func_rel_inc'
-            # revert to metrics/distributions from last step
-            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t, Dxt =\
-            L_old, ixt_old, iyt_old, ht_old, T_old, ht_x_old, hy_t_old, qt_x_old, qt_old, qy_t_old, Dxt_old
-        else:
-            # store stepwise data
-            step_time = time.time() - step_start_time 
-            metrics_sw = store_sw_metrics(metrics_sw,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,Nsteps)
-            if compact>1: dist_sw = store_sw_dist(dist_sw,qt_x,qt,qy_t,Dxt,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,Nsteps)
-            # store this step in case need to revert at next step
-            L_old, ixt_old, iyt_old, ht_old, T_old, ht_x_old, hy_t_old, qt_x_old, qt_old, qy_t_old, Dxt_old =\
-            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t, Dxt
-    # end iterative IB steps
-    
-    # report
-    if verbose>0: print('converged in %i step(s) to: ' % Nsteps + metrics_string(ixt,ht,hx,iyt,ixy,L))
-            
-    # replace converged step with single-cluster map if better
-    if T>1:
-        step_start_time = time.time()
-        sqt_x = np.zeros((T,X))
-        sqt_x[0,:] = 1.
-        sqt_x,sqt,sT = qt_step(sqt_x,px,ptol,verbose)
-        sqy_t = qy_t_step(sqt_x,sqt,px,py_x)
-        if geoapprox: sDxt = build_dist_mat(sqt_x,sqt,coord)
-        else: sDxt = None
-        sht, shy_t, siyt, sht_x, sixt, sL = calc_metrics(sqt_x,sqt,sqy_t,px,hy,alpha,beta)
-        if sL<(L-zeroLtol): # if better fit...
-            conv_condition += '_AND_force_single'
-            if verbose>0: print("Single-cluster mapping reduces L from %.4f to %.4f; replacing solution." % (L,sL))
-            # replace everything
-            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t, Dxt =\
-            sL, sixt, siyt, sht, sT, sht_x, shy_t, sqt_x, sqt, sqy_t, sDxt
-            # store stepwise data
-            step_time = time.time() - step_start_time 
-            metrics_sw = store_sw_metrics(metrics_sw,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,Nsteps+1)
-            if compact>1: dist_sw = store_sw_dist(dist_sw,qt_x,qt,qy_t,Dxt,L,ixt,iyt,ht,T,ht_x,hy_t,step_time,Nsteps+1)
-            L_old, ixt_old, iyt_old, ht_old, T_old, ht_x_old, hy_t_old, qt_x_old, qt_old, qy_t_old, Dxt_old =\
-            L, ixt, iyt, ht, T, ht_x, hy_t, qt_x, qt, qy_t, Dxt
-            if verbose>0: print('single-cluster solution: ' + metrics_string(ixt,ht,hx,iyt,ixy,L))            
-        elif verbose>0: print("Single-cluster mapping not better; changes L from %.4f to %.4f (zeroLtol = %.1e)." % (L,sL,zeroLtol))
-    # end single-cluster check
-    
-    # build converged solution dataframe
-    conv_time = time.time() - iter_start_time
-    metrics_conv = pd.DataFrame(data={
-                        'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T,
-                        'ht_x': ht_x, 'hy_t': hy_t, 'hx': hx, 'ixy': ixy,
-                        'time': conv_time, 'step': Nsteps, 'Tmax': Tmax,
-                        'beta': beta, 'alpha': alpha, 'p0': p0, 'waviness': waviness,
-                        'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
-                        'ptol': ptol, 'zeroLtol': zeroLtol,
-                        'conv_condition': conv_condition, 'clamp': False, 'geoapprox': geoapprox},
-                        index=[0])
-    if compact>0: dist_conv = pd.DataFrame(data={
-                        'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t], 'Dxt': [Dxt],
-                        'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T,
-                        'ht_x': ht_x, 'hy_t': hy_t, 'hx': hx, 'ixy': ixy,
-                        'time': conv_time, 'step': Nsteps, 'Tmax': Tmax,
-                        'beta': beta, 'alpha': alpha, 'p0': p0, 'waviness': waviness,
-                        'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
-                        'ptol': ptol, 'zeroLtol': zeroLtol,
-                        'conv_condition': conv_condition, 'clamp': False, 'geoapprox': geoapprox},
-                        index=[0])
-                                
-    # add in stuff that doesn't vary by step to the stepwise dataframe
-    metrics_sw['hx'] = hx
-    metrics_sw['ixy'] = ixy
-    metrics_sw['Tmax'] = Tmax
-    metrics_sw['beta'] = beta
-    metrics_sw['alpha'] = alpha  
-    metrics_sw['p0'] = p0
-    metrics_sw['waviness'] = waviness
-    metrics_sw['ctol_abs'] = ctol_abs
-    metrics_sw['ctol_rel'] = ctol_rel
-    metrics_sw['ptol'] = ptol 
-    metrics_sw['zeroLtol'] = zeroLtol
-    metrics_sw['geoapprox'] = geoapprox
-    if compact>1:
-        dist_sw['Tmax'] = Tmax
-        dist_sw['beta'] = beta
-        dist_sw['alpha'] = alpha
-        dist_sw['p0'] = p0
-        dist_sw['waviness'] = waviness
-        dist_sw['ctol_abs'] = ctol_abs
-        dist_sw['ctol_rel'] = ctol_rel
-        dist_sw['ptol'] = ptol
-        dist_sw['zeroLtol'] = zeroLtol
-        dist_sw['geoapprox'] = geoapprox
-    
-    # optional clamping step (doesn't apply to DIB)
-    if alpha>0 and clamp:       
-        clamp_start_time = time.time()        
-        # STEP 1: CLAMP Q(T|X)
-        cqt_x = np.zeros(qt_x.shape)
-        for x in range(X):
-            tstar = np.argmax(qt_x[:,x])
-            cqt_x[tstar,x] = 1
-        qt_x = cqt_x
-        # STEP 2: UPDATE Q(T)
-        qt_x,qt,T = qt_step(qt_x,px,ptol,verbose)        
-        # STEP 3: UPDATE Q(Y|T)
-        qy_t = qy_t_step(qt_x,qt,px,py_x)
-        if geoapprox: Dxt = build_dist_mat(qt_x,qt,coord)
-        # calculate and print metrics
-        ht, hy_t, iyt, ht_x, ixt, L = calc_metrics(qt_x,qt,qy_t,px,hy,alpha,beta)
-        if verbose>0: print('clamped: ' + metrics_string(ixt,ht,hx,iyt,ixy,L))            
-        # store everything
-        clamp_step_time = time.time()-clamp_start_time
-        metrics_conv = metrics_conv.append(pd.DataFrame(data={
-                        'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T,
-                        'ht_x': ht_x, 'hy_t': hy_t, 'hx': hx, 'ixy': ixy,
-                        'time': conv_time+clamp_step_time, 'step': Nsteps+1,
-                        'Tmax': Tmax, 'beta': beta, 'alpha': alpha,
-                        'p0': p0, 'waviness': waviness, 'zeroLtol': zeroLtol,
-                        'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
-                        'ptol': ptol, 'conv_condition': conv_condition,
-                        'clamp': True, 'geoapprox': geoapprox}, index=[1]), ignore_index = True)
-        if compact>0: dist_conv = dist_conv.append(pd.DataFrame(data={
-                        'qt_x': [qt_x], 'qt': [qt], 'qy_t': [qy_t], 'Dxt': [Dxt],
-                        'L': L, 'ixt': ixt, 'iyt': iyt, 'ht': ht, 'T': T,
-                        'ht_x': ht_x, 'hy_t': hy_t, 'hx': hx, 'ixy': ixy,
-                        'time': conv_time+clamp_step_time, 'step': Nsteps+1,
-                        'Tmax': Tmax, 'beta': beta, 'alpha': alpha,
-                        'p0': p0, 'waviness': waviness, 'zeroLtol': zeroLtol,
-                        'ctol_abs': ctol_abs, 'ctol_rel': ctol_rel,
-                        'ptol': ptol, 'conv_condition': conv_condition,
-                        'clamp': True, 'geoapprox': geoapprox},
-                        index=[1]), ignore_index = True)
         
-    # return results
-    if compact<=1: dist_sw = pd.DataFrame(data={'qt_x': [qt_x0]},index=[0]) # at least pass back init
-    if compact==0: dist_conv = None
-    return metrics_sw, dist_sw, metrics_conv, dist_conv
+        # check for small changes
+        small_abs_changes = abs(Lold-self.L)<self.ctol_abs
+        small_rel_changes = (abs(Lold-self.L)/abs(Lold))<self.ctol_rel
+        if small_abs_changes or small_rel_changes: self.cstep += 1
+        else: self.cstep = 0 # reset counter of small changes in a row
+        if small_abs_changes and self.cstep>=self.cthresh:
+            self.conv_condition = 'small_abs_changes'
+            print('converged due to small absolute changes in objective')  
+        if small_rel_changes and self.cstep>=self.cthresh:
+            self.append_conv_condition('small_rel_changes')
+            print('converged due to small relative changes in objective')
             
-def refine_beta(metrics_conv,verbose=2):
+        # check for objective becoming NaN
+        if np.isnan(self.L):
+            self.cstep = self.cthresh            
+            self.append_conv_condition('cost_func_NaN')
+            print('stopped because objective = NaN')
+            
+        L_abs_inc_flag = self.L>(Lold+self.ctol_abs)
+        L_rel_inc_flag = self.L>(Lold+(abs(Lold)*self.ctol_rel))
+        
+        # check for reduction to single cluster        
+        if self.T==1 and not(L_abs_inc_flag) and not(L_rel_inc_flag):
+            self.cstep = self.cthresh
+            self.append_conv_condition('single_cluster')
+            print('converged due to reduction to single cluster')
+            
+        # check if obj went up by amount above threshold (after 1st step)
+        if (L_abs_inc_flag or L_rel_inc_flag) and self.step>1: # if so, don't store or count this step!
+            self.cstep = self.cthresh
+            if L_abs_inc_flag:
+                self.append_conv_condition('cost_func_abs_inc')
+                print('converged due to absolute increase in objective value')
+            if L_rel_inc_flag:
+                self.append_conv_condition('cost_func_rel_inc')
+                print('converged due to relative increase in objective value')
+            # revert to metrics/distributions from last step
+            self.prev.conv_condition = self.conv_condition
+            self.depanda(self.prev)
+        #  otherwise, store step
+        else: self.update_sw()
+                
+    def check_single_better(self):
+        """ Replace converged step with single-cluster map if better."""
+        sqt_x = np.zeros((self.T,self.ds.X))
+        sqt_x[0,:] = 1.
+        smodel = model(ds=self.ds,alpha=self.alpha,beta=self.beta,Tmax=self.Tmax,
+                       qt_x=sqt_x,p0=self.p0,waviness=self.waviness,
+                       ctol_abs=self.ctol_abs,ctol_rel=self.ctol_rel,cthresh=self.cthresh,
+                       ptol=self.ptol,zeroLtol=self.zeroLtol,geoapprox=self.geoapprox,
+                       quiet=True)
+        smodel.step = self.step
+        smodel.conv_condition = self.conv_condition + '_AND_force_single'
+        if smodel.L<(self.L-self.zeroLtol): # if better fit...            
+            print("single-cluster mapping reduces L from %.4f to %.4f (zeroLtol = %.1e); replacing solution." % (self.L,smodel.L,self.zeroLtol))
+            # replace everything
+            self.depanda(smodel.panda(dist_to_keep={'qt_x','qt','qy_t','Dxt'}))
+            self.update_sw()
+            print('single-cluster solution: ' + self.report_metrics())            
+        else: print("single-cluster mapping not better; changes L from %.4f to %.4f (zeroLtol = %.1e)." % (self.L,smodel.L,self.zeroLtol)) 
+                
+    def fit(self,keep_steps=False,dist_to_keep={'qt_x','qt','qy_t','Dxt'}):
+        """Runs generalized IB algorithm to convergence for current model.
+        keep_steps determines whether pre-convergence models / statistics about
+        them are kept. dist_to_keep is a set with the model distributions to be
+        kept for each step."""
+        
+        fit_start_time = time.time()
+                       
+        self.keep_steps = keep_steps
+        self.dist_to_keep = dist_to_keep
+        
+        print(20*'*'+' Beginning IB fit with the following parameters '+20*'*')
+        print(self.report_param())
+        print(88*'*')
+        
+        # initialize stepwise dataframes, if tracking them             
+        if self.keep_steps:
+            self.metrics_sw = self.panda()
+            if bool(self.dist_to_keep): self.dist_sw = self.panda(self.dist_to_keep)
+        
+        # check if single cluster init
+        if self.T==1:
+            self.cstep = self.cthresh
+            print('converged due to initialization with single cluster')
+            self.conv_condition = 'single_cluster_init'
+        else: # init iterative parameters
+            self.cstep = 0
+            self.conv_condition = None           
+        
+        # save encoder init
+        self.qt_x0 = self.qt_x
+        
+        # iterate to convergence
+        while self.cstep<self.cthresh:
+            
+            self.prev = self.panda(dist_to_keep={'qt_x','qt','qy_t','Dxt'}) 
+            self.make_step()            
+            print('step %i: ' % self.step + self.report_metrics())
+            self.check_converged()
+
+        # report
+        print('converged in %i step(s) to: ' % self.step + self.report_metrics())
+        
+        # replace converged step with single-cluster map if better
+        if self.T>1: self.check_single_better()
+        
+        # clean up
+        self.cstep = None
+        self.prev = None
+        self.step_time = None
+
+        # record total time to convergence
+        self.conv_time = time.time() - fit_start_time
+
+def refine_beta(metrics_conv):
     """Helper function for IB to automate search over parameter beta."""
     
     # parameters governing insertion of betas, or when there is a transition to NaNs (due to under/overflow)
@@ -624,7 +680,7 @@ def refine_beta(metrics_conv,verbose=2):
     eps1 = .999 # tolerance for considering I(T;Y) to be I(X;Y)
     l1 = 1 # number of betas to insert at high beta end
     f1 = 2 # new betas will be maxbeta*f0.^1:l0
-    max_beta_allowed = 500 # any proposed betas above this will be filtered out and replaced it max_beta_allowed
+    max_beta_allowed = 10000 # any proposed betas above this will be filtered out and replaced it max_beta_allowed
 
     # sort fits by beta
     metrics_conv = metrics_conv.sort_values(by='beta')
@@ -634,13 +690,13 @@ def refine_beta(metrics_conv,verbose=2):
     NaNtran = False
     ixy = metrics_conv['ixy'].iloc[0]
     logT = math.log2(metrics_conv['Tmax'].iloc[0])
-    if verbose>0: print('-----------------------------------')
+    print('-----------------------------------')
     
     # check that smallest beta was small enough
     if metrics_conv['ixt'].min()>eps0:
         minbeta = metrics_conv['beta'].min()
         new_betas += [minbeta*(f0**n) for n in range(1,l0+1)]
-        if verbose==2: print('Added %i small betas. %.1f was too large.' % (l0,minbeta))
+        print('Added %i small betas. %.1f was too large.' % (l0,minbeta))
     
     # check for gaps to fill
     for i in range(metrics_conv.shape[0]-1):
@@ -665,30 +721,29 @@ def refine_beta(metrics_conv,verbose=2):
                ((T2-T1)>del_T) or\
                NaNtran:
                    new_betas += list(np.linspace(beta1,beta2,l+2)[1:l+1])
-                   if verbose==2: print('Added %i betas between %.1f and %.1f.' % (l,beta1,beta2))
+                   print('Added %i betas between %.1f and %.1f.' % (l,beta1,beta2))
             if NaNtran: # stop search if there was a NaNtran
-                if verbose==2: print('(...because there was a transition to NaNs.)')
+                print('(...because there was a transition to NaNs.)')
                 break
     
     # check that largest beta was large enough
     if ((metrics_conv['iyt'].max()/ixy)<eps1) and ~NaNtran:
         maxbeta = metrics_conv['beta'].max()
         new_betas += [maxbeta*(f1**n) for n in range(1,l1+1)]
-        if verbose==2: print('Added %i large betas. %.1f was too small.' % (l1,maxbeta))
+        print('Added %i large betas. %.1f was too small.' % (l1,maxbeta))
         
     # filter out betas above max_beta_allowed
     if any([beta>max_beta_allowed for beta in new_betas]):
         if verbose==2: print('Filtered out %i betas larger than max_beta_allowed.' % len([beta for beta in new_betas if beta>max_beta_allowed]))
         new_betas = [beta for beta in new_betas if beta<max_beta_allowed]
         if max_beta_allowed in (list(metrics_conv['beta'].values)+new_betas):
-            if verbose==2: print('...and not replaced since max_beta_allowed = %i already used.' % max_beta_allowed)
+            print('...and not replaced since max_beta_allowed = %i already used.' % max_beta_allowed)
         else:
             new_betas += [max_beta_allowed]
-            if verbose==2: print('And replaced them with max_beta_allowed = %i.' % max_beta_allowed)        
+            print('And replaced them with max_beta_allowed = %i.' % max_beta_allowed)        
     
-    if verbose>0:
-        print('Added %i new beta(s).' % len(new_betas))
-        print('-----------------------------------')
+    print('Added %i new beta(s).' % len(new_betas))
+    print('-----------------------------------')
 
     return new_betas
     
@@ -707,7 +762,8 @@ def make_param_dict(fit_param,*args):
             param_dict[arg] = fit_param[arg] # ...add to keyword dictionary
     return param_dict
 
-def IB(pxy,fit_param,compact=1,verbose=2):
+def IB(ds,fit_param,conv_dist_to_keep={'qt_x','qt','qy_t','Dxt'},
+       keep_steps=True,sw_dist_to_keep={'qt_x','qt','qy_t','Dxt'}):
     """Performs many generalized IB fits to a single p(x,y).
     
     One fit is performed for each row of input dataframe fit_param. Columns
@@ -806,150 +862,201 @@ def IB(pxy,fit_param,compact=1,verbose=2):
     def_max_fits = 100
     def_max_time = 7*24*60*60 # 1 week
     def_repeats = 1
+    def_geoapprox = False
+    def_clamp = True
     
-    # frequently used column names
-    dist_cols = ['qt_x','qt','qy_t','Dxt']
-    converged_cols = ['conv_condition','clamp']
-    all_cols = ['L','T','ht','ht_x','hy_t','ixt','iyt','hx','ixy',
-                'alpha','beta','Tmax','p0','waviness','ctol_abs','ctol_rel',
-                'ptol','zeroLtol','geoapprox','step','time','fitID','repeat','repeats']
-    
-    # initialize dataframes
-    metrics_sw = pd.DataFrame(columns=all_cols)
-    metrics_sw_allreps = pd.DataFrame(columns=all_cols)
-    metrics_conv = pd.DataFrame(columns=all_cols+converged_cols)
-    metrics_conv_allreps = pd.DataFrame(columns=all_cols+converged_cols)
-    if compact>1: dist_sw = pd.DataFrame(columns=dist_cols+all_cols)
-    if compact>1: dist_sw_allreps = pd.DataFrame(columns=dist_cols+all_cols) 
-    if compact>0: dist_conv = pd.DataFrame(columns=dist_cols+all_cols+converged_cols)
-    if compact>0: dist_conv_allreps = pd.DataFrame(columns=dist_cols+all_cols+converged_cols)                                                                                            
+    # initialize primary dataframes
+    metrics_conv = None
+    metrics_sw = None
+    dist_conv = None
+    dist_sw = None    
     
     # iterate over fit parameters (besides beta, which is done below)
-    fit_param = fit_param.where((pd.notnull(fit_param)), None) # NaN -> None   
-    fitID = 0                            
+    fit_param = fit_param.where((pd.notnull(fit_param)), None) # NaN -> None
+    paramID = 0 # all betas have same
+    fitID = 0 # all repeats have same
+    fitIDwrep = 0 # repeats get unique       
     for irow in range(len(fit_param.index)):
+        
+        # tick counter
+        paramID += 1
         
         # extract parameters for this fit
         this_fit = fit_param.iloc[irow]
         this_alpha = this_fit['alpha']
-        # optional parameters that have defaults set above
+        
+        # parameters that have defaults set above
         this_betas = set_param(this_fit,'betas',def_betas[:]) # slice here to pass by value, not ref
         if not isinstance(this_betas,list): this_betas = [this_betas]
         this_beta_search = set_param(this_fit,'beta_search',def_beta_search)
         this_max_fits = set_param(this_fit,'max_fits',def_max_fits)
         this_max_time = set_param(this_fit,'max_time',def_max_time)
         this_repeats = int(set_param(this_fit,'repeats',def_repeats))
+        this_geoapprox = set_param(this_fit,'geoapprox',def_geoapprox)
+        this_clamp = set_param(this_fit,'clamp',def_clamp)
+        
         # optional parameters that have defaults set by IB_single.py
-        param_dict = make_param_dict(this_fit,'Tmax','p0','waviness','ctol_abs','ctol_rel','ptol','zeroLtol','clamp') 
-        geoapprox = this_fit.get('geoapprox',False)
+        param_dict = make_param_dict(this_fit,'Tmax','p0','waviness','ctol_abs','ctol_rel','cthresh','ptol','zeroLtol')
+        
         # make pre-fitting initializations
         betas = this_betas # stack of betas
         fit_count = 0
         fit_time = 0
         fit_start_time = time.time()
-        # this df is used for beta refinement (separately do search with and without geoapprox)
-        these_betas_metrics_conv = pd.DataFrame(columns=['ht','ixt','iyt','hx','ixy','T','Tmax','beta','conv_condition'])
-        if geoapprox: these_betas_metrics_conv_approx = pd.DataFrame(columns=['ht','ixt','iyt','hx','ixy','Tmax','beta','conv_condition'])
         
-        while (fit_count<=this_max_fits) and (fit_time<=this_max_time) and (len(betas)>0):
+        # loop over betas
+        while fit_count<=this_max_fits and fit_time<=this_max_time and len(betas)>0:
+            
+            # tick counter
+            fitID += 1
+            
             # pop beta from stack
-            this_beta = betas.pop()            
+            this_beta = betas.pop()  
+            
             # init data structures that will store the repeated fits for this particular setting of parameters
-            these_reps_metrics_sw = pd.DataFrame(columns=all_cols)
-            these_reps_metrics_conv = pd.DataFrame(columns=all_cols+converged_cols)
-            if compact>1: these_reps_dist_sw = pd.DataFrame(columns=dist_cols+all_cols)                                                                                                                         
-            if compact>0: these_reps_dist_conv = pd.DataFrame(columns=dist_cols+all_cols+converged_cols)
+            these_metrics_sw = None
+            these_metrics_conv = None
+            these_dist_sw = None
+            these_dist_conv = None  
             
             # loop over repeats                                        
             for repeat in range(this_repeats):
-                # do a single fit
-                if verbose>0: print("+++++++++++ repeat %i of %i +++++++++++" % (repeat+1,this_repeats))
-                if geoapprox:
-                    # run first without approx
-                    this_metrics_sw, this_dist_sw, this_metrics_conv, this_dist_conv = \
-                        IB_single(pxy['pxy'],this_beta,this_alpha,compact=compact,verbose=verbose,**param_dict,geoapprox=False)
-                    # then run with approx on same init
-                    qt_x0 = this_dist_sw['qt_x'].iloc[0]
-                    this_metrics_sw2, this_dist_sw2, this_metrics_conv2, this_dist_conv2 = \
-                        IB_single(pxy,this_beta,this_alpha,compact=compact,verbose=verbose,**param_dict,qt_x=qt_x0,geoapprox=True)
-                    # and combine both results
-                    this_metrics_sw = this_metrics_sw.append(this_metrics_sw2, ignore_index = True)
-                    this_dist_sw = this_dist_sw.append(this_dist_sw2, ignore_index = True)
-                    this_metrics_conv = this_metrics_conv.append(this_metrics_conv2, ignore_index = True)
-                    this_dist_conv = this_dist_conv.append(this_dist_conv2, ignore_index = True)
-                else:
-                    this_metrics_sw, this_dist_sw, this_metrics_conv, this_dist_conv = \
-                        IB_single(pxy,this_beta,this_alpha,compact=compact,verbose=verbose,**param_dict)
-                # add repeat labels
-                this_metrics_sw['repeat'] = repeat
-                this_metrics_sw['repeats'] = this_repeats
-                this_metrics_conv['repeat'] = repeat
-                this_metrics_conv['repeats'] = this_repeats
-                if compact>1: this_dist_sw['repeat'] = repeat
-                if compact>1: this_dist_sw['repeats'] = this_repeats
-                if compact>0: this_dist_conv['repeat'] = repeat
-                if compact>0: this_dist_conv['repeats'] = this_repeats
-                # add fit ID
-                this_metrics_sw['fitID'] = fitID
-                this_metrics_conv['fitID'] = fitID
-                if compact>1: this_dist_sw['fitID'] = fitID
-                if compact>0: this_dist_conv['fitID'] = fitID
-                fitID += 1
-                # add this repeat to these repeats
-                these_reps_metrics_sw = these_reps_metrics_sw.append(this_metrics_sw, ignore_index = True)
-                these_reps_metrics_conv = these_reps_metrics_conv.append(this_metrics_conv, ignore_index = True)
-                if compact>1: these_reps_dist_sw = these_reps_dist_sw.append(this_dist_sw, ignore_index = True)
-                if compact>0: these_reps_dist_conv = these_reps_dist_conv.append(this_dist_conv, ignore_index = True)  
-            # end of repeat fit loop for single beta 
-            
-            # store all repeats
-            metrics_sw_allreps = metrics_sw_allreps.append(these_reps_metrics_sw, ignore_index = True)
-            metrics_conv_allreps = metrics_conv_allreps.append(these_reps_metrics_conv, ignore_index = True)
-            if compact>1: dist_sw_allreps = dist_sw_allreps.append(these_reps_dist_sw, ignore_index = True)
-            if compact>0: dist_conv_allreps = dist_conv_allreps.append(these_reps_dist_conv, ignore_index = True)
                 
-            # find best repeat (lowest L): ignored clamped and approx fits
-            these_reps_metrics_conv_vanilla = these_reps_metrics_conv[(these_reps_metrics_conv['clamp']==False) & (these_reps_metrics_conv['geoapprox']==False)]
-            best_id = these_reps_metrics_conv_vanilla['L'].idxmin()
+                # tick counter
+                fitIDwrep += 1
+                print("+++++++++++ repeat %i of %i +++++++++++" % (repeat+1,this_repeats))
+                
+                # do a single fit and extract resulting dataframes
+                m = model(ds=ds,alpha=this_alpha,beta=this_beta,**param_dict,geoapprox=False)
+                m.fit(keep_steps=keep_steps,dist_to_keep=sw_dist_to_keep)
+                this_metrics_conv = m.panda()
+                if bool(conv_dist_to_keep): this_dist_conv = m.panda(conv_dist_to_keep)
+                
+                # once converged model is extracted, clamp if necessary
+                if this_clamp and this_alpha!=0:
+                    m.clamp()
+                    this_metrics_conv = this_metrics_conv.append(m.panda(), ignore_index = True)
+                    if bool(conv_dist_to_keep): this_dist_conv = this_dist_conv.append(m.panda(conv_dist_to_keep), ignore_index = True)
+                    
+                # extract sw models as necessary
+                if keep_steps:
+                    this_metrics_sw = m.metrics_sw
+                    if bool(sw_dist_to_keep): this_dist_sw = m.dist_sw
+                    
+                # if also running geoapprox...
+                if this_geoapprox:
+                    
+                    # ...then run with approx on same init
+                    m2 = model(ds=ds,alpha=this_alpha,beta=this_beta,**param_dict,geoapprox=True,qt_x0=m.qt_x0)
+                    m2.fit()
+                    
+                    # ...and append results
+                    this_metrics_conv = this_metrics_conv.append(m2.panda(), ignore_index = True)
+                    if bool(conv_dist_to_keep): this_dist_conv = this_dist_conv.append(m2.panda(conv_dist_to_keep), ignore_index = True)
+                    
+                    # once converged model is extracted, clamp if necessary
+                    if this_clamp and this_alpha!=0:
+                        m2.clamp()
+                        this_metrics_conv = this_metrics_conv.append(m2.panda(), ignore_index = True)
+                        if bool(conv_dist_to_keep): this_dist_conv = this_dist_conv.append(m2.panda(conv_dist_to_keep), ignore_index = True)
+                        
+                    # extract sw models as necessary
+                    if keep_steps:
+                        this_metrics_sw = this_metrics_sw.append(m2.metrics_sw, ignore_index = True)
+                        if bool(sw_dist_to_keep): this_dist_sw = this_dist_sw.append(m2.dist_sw, ignore_index = True)
+                        
+                # add repeat labels and fit IDs, which are specific to this repeat            
+                this_metrics_conv['repeat'] = repeat
+                this_metrics_conv['fitIDwrep'] = fitIDwrep
+                if keep_steps:
+                    this_metrics_sw['repeat'] = repeat
+                    this_metrics_sw['fitIDwrep'] = fitIDwrep
+                if bool(conv_dist_to_keep):
+                    this_dist_conv['repeat'] = repeat
+                    this_dist_conv['fitIDwrep'] = fitIDwrep
+                if bool(sw_dist_to_keep):
+                    this_dist_sw['repeat'] = repeat
+                    this_dist_sw['fitIDwrep'] = fitIDwrep
+                    
+                # add this repeat to these repeats
+                if these_metrics_conv is not None: these_metrics_conv = these_metrics_conv.append(this_metrics_conv, ignore_index = True)
+                else: these_metrics_conv = this_metrics_conv
+                if keep_steps:
+                    if these_metrics_sw is not None: these_metrics_sw = these_metrics_sw.append(this_metrics_sw, ignore_index = True)
+                    else: these_metrics_sw = this_metrics_sw
+                if bool(conv_dist_to_keep):
+                    if these_dist_conv is not None: these_dist_conv = these_dist_conv.append(this_dist_conv, ignore_index = True)
+                    else: these_dist_conv = this_dist_conv
+                if bool(sw_dist_to_keep):
+                    if these_dist_sw is not None: these_dist_sw = these_dist_sw.append(this_dist_sw, ignore_index = True)
+                    else: these_dist_sw = this_dist_sw
+            # end of repeat fit loop for single beta
+
+            # add number of repeats and fit ID (without repeats)
+            these_metrics_conv['paramID'] = paramID # this is assigned earlier than expected to help with beta refinement
+            these_metrics_conv['fitID'] = fitID
+            these_metrics_conv['repeats'] = this_repeats
+            if keep_steps:
+                these_metrics_sw['paramID'] = paramID
+                these_metrics_sw['fitID'] = fitID
+                these_metrics_sw['repeats'] = this_repeats
+            if bool(conv_dist_to_keep):
+                these_dist_conv['paramID'] = paramID
+                these_dist_conv['fitID'] = fitID
+                these_dist_conv['repeats'] = this_repeats
+            if bool(sw_dist_to_keep):
+                these_dist_sw['paramID'] = paramID
+                these_dist_sw['fitID'] = fitID
+                these_dist_sw['repeats'] = this_repeats
+            
+            # mark best repeat (lowest L): ignored clamped and approx fits
+            df = these_metrics_conv[(these_metrics_conv['clamped']==False) & (these_metrics_conv['geoapprox']==False)]
+            best_id = df['L'].idxmin()
             if np.isnan(best_id): # if all repeats NaNs, just use first repeat
                 best_repeat = 0
             else: # otherwise use best
-                best_repeat = these_reps_metrics_conv['repeat'].loc[best_id]
-            best_metrics_conv = these_reps_metrics_conv[these_reps_metrics_conv['repeat']==best_repeat]
-            best_metrics_sw = these_reps_metrics_sw[these_reps_metrics_sw['repeat']==best_repeat]
-            if compact>1: best_dist_sw = these_reps_dist_sw[these_reps_dist_sw['repeat']==best_repeat]
-            if compact>0: best_dist_conv = these_reps_dist_conv[these_reps_dist_conv['repeat']==best_repeat]
+                best_repeat = these_metrics_conv['repeat'].loc[best_id]
+            these_metrics_conv['bestrep'] = False
+            these_metrics_conv.loc[these_metrics_conv['repeat'] == best_repeat, 'bestrep'] = True
+            if keep_steps:
+                these_metrics_sw['bestrep'] = False
+                these_metrics_sw.loc[these_metrics_sw['repeat'] == best_repeat, 'bestrep'] = True
+            if bool(conv_dist_to_keep):
+                these_dist_conv['bestrep'] = False
+                these_dist_conv.loc[these_dist_conv['repeat'] == best_repeat, 'bestrep'] = True
+            if bool(sw_dist_to_keep):
+                these_dist_sw['bestrep'] = False
+                these_dist_sw.loc[these_dist_sw['repeat'] == best_repeat, 'bestrep'] = True
                 
-            # store in best fits dataframe 
-            metrics_sw = metrics_sw.append(best_metrics_sw, ignore_index = True)
-            metrics_conv = metrics_conv.append(best_metrics_conv, ignore_index = True)
-            if compact>1: dist_sw = dist_sw.append(best_dist_sw, ignore_index = True)
-            if compact>0: dist_conv = dist_conv.append(best_dist_conv, ignore_index = True)
-                
-            # store best fits across beta for this set of parameters, ignoring clamped fits
-            these_betas_metrics_conv = these_betas_metrics_conv.append(best_metrics_conv[(best_metrics_conv['clamp']==False) & (best_metrics_conv['geoapprox']==False)], ignore_index = True)
-            if geoapprox: these_betas_metrics_conv_approx = these_betas_metrics_conv_approx.append(best_metrics_conv[(best_metrics_conv['clamp']==False) & (best_metrics_conv['geoapprox']==True)], ignore_index = True)
-                    
-            # advance
+            # store repeats in primary dataframe
+            if metrics_conv is not None: metrics_conv = metrics_conv.append(these_metrics_conv, ignore_index = True)
+            else: metrics_conv = these_metrics_conv
+            if keep_steps:
+                if metrics_sw is not None: metrics_sw = metrics_sw.append(these_metrics_sw, ignore_index = True)
+                else: metrics_sw = these_metrics_sw
+            if bool(conv_dist_to_keep):
+                if dist_conv is not None: dist_conv = dist_conv.append(these_dist_conv, ignore_index = True)
+                else: dist_conv = these_dist_conv
+            if bool(sw_dist_to_keep):
+                if dist_sw is not None: dist_sw = dist_sw.append(these_dist_sw, ignore_index = True)
+                else: dist_sw = these_dist_sw
+
+            # advance fit counters
             fit_count += this_repeats
             fit_time = time.time()-fit_start_time
             
             # refine beta if needed
             if len(betas)==0 and this_beta_search:
-                betas = refine_beta(these_betas_metrics_conv,verbose)
-                if geoapprox:
-                    if verbose>0: print('Now adding betas for geoapprox alg...')
-                    betas += refine_beta(these_betas_metrics_conv_approx,verbose)
+                betas = refine_beta(metrics_conv[(metrics_conv['paramID']==paramID) & (metrics_conv['bestrep']==True) & (metrics_conv['clamped']==False) & (metrics_conv['geoapprox']==False)])
+                if this_geoapprox:
+                    print('Now adding betas for geoapprox algorithm...')
+                    betas += refine_beta(metrics_conv[(metrics_conv['paramID']==paramID) & (metrics_conv['bestrep']==True) & (metrics_conv['clamped']==False) & (metrics_conv['geoapprox']==True)])
                 betas.sort(reverse=True)
                 betas = list(set(betas)) # removes duplicates
                 
-        if verbose>0:
-            if fit_count>=this_max_fits: print('Stopped beta refinement because ran over max fit count of %i' % this_max_fits)
-            if fit_time>=this_max_time: print('Stopped beta refinement because ran over max fit time of %i seconds' % this_max_time)
-            if len(betas)==0: print('Beta refinement complete.')
+        if fit_count>=this_max_fits: print('Stopped beta refinement because ran over max fit count of %i' % this_max_fits)
+        if fit_time>=this_max_time: print('Stopped beta refinement because ran over max fit time of %i seconds' % this_max_time)
+        if len(betas)==0: print('Beta refinement complete.')
 
     # end iteration over fit parameters
-    if compact<=1: dist_sw, dist_sw_allreps = None, None
-    if compact==0: dist_conv, dist_conv_allreps = None, None
-    return metrics_sw, dist_sw, metrics_conv, dist_conv,\
-           metrics_sw_allreps, dist_sw_allreps, metrics_conv_allreps, dist_conv_allreps
+    return metrics_conv, dist_conv, metrics_sw, dist_sw

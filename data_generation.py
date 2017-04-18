@@ -3,6 +3,322 @@ import matplotlib.pyplot as plt
 import os
 import numpy as np
 
+def gen_easytest(plot=True):
+    
+    # set name
+    name = "easytest"
+            
+    # set generative parameters  
+    mu1 = np.array([0,0])
+    sig1 = np.eye(2)
+    n1 = 5
+    mu2 = np.array([math.sqrt(75),5])
+    sig2 = np.eye(2)
+    n2 = 5
+    mu3 = np.array([0,10])
+    sig3 = np.eye(2)
+    n3 = 5
+    param = {'mu1': mu1, 'sig1': sig1, 'n1': n1,
+             'mu2': mu2, 'sig2': sig2, 'n2': n2,
+             'mu3': mu3, 'sig3': sig3, 'n3': n3}
+    
+    # make labels
+    labels = np.array([0]*n1+[1]*n2+[2]*n3)
+    
+    # make coordinates
+    coord = np.concatenate((np.random.multivariate_normal(mu1,sig1,n1),
+                            np.random.multivariate_normal(mu2,sig2,n2),
+                            np.random.multivariate_normal(mu3,sig3,n3)))
+    
+    # make dataset
+    ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
+    
+    # plot coordinates
+    if plot: ds.plot_coord()
+        
+    return ds
+     
+def gen_3sph_evensamp_evenspacing(plot=True):
+
+    # set name
+    name = "3sph_evensamp_evenspacing"
+            
+    # set generative parameters  
+    mu1 = np.array([0,0])
+    sig1 = np.eye(2)
+    n1 = 30
+    mu2 = np.array([math.sqrt(75),5])
+    sig2 = np.eye(2)
+    n2 = 30
+    mu3 = np.array([0,10])
+    sig3 = np.eye(2)
+    n3 = 30
+    param = {'mu1': mu1, 'sig1': sig1, 'n1': n1,
+             'mu2': mu2, 'sig2': sig2, 'n2': n2,
+             'mu3': mu3, 'sig3': sig3, 'n3': n3}
+    
+    # make labels
+    labels = np.array([0]*n1+[1]*n2+[2]*n3)
+    
+    # make coordinates
+    coord = np.concatenate((np.random.multivariate_normal(mu1,sig1,n1),
+                            np.random.multivariate_normal(mu2,sig2,n2),
+                            np.random.multivariate_normal(mu3,sig3,n3)))
+    
+    # make dataset
+    ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
+    
+    # plot coordinates
+    if plot: ds.plot_coord()
+        
+    return ds
+    
+def gen_3sph_unevensamp_evenspacing(plot=True):
+
+    # set name
+    name = "3sph_unevensamp_evenspacing"
+            
+    # set generative parameters  
+    mu1 = np.array([0,0])
+    sig1 = np.eye(2)
+    n1 = 10
+    mu2 = np.array([math.sqrt(75),5])
+    sig2 = np.eye(2)
+    n2 = 30
+    mu3 = np.array([0,10])
+    sig3 = np.eye(2)
+    n3 = 60
+    param = {'mu1': mu1, 'sig1': sig1, 'n1': n1,
+             'mu2': mu2, 'sig2': sig2, 'n2': n2,
+             'mu3': mu3, 'sig3': sig3, 'n3': n3}
+    
+    # make labels
+    labels = np.array([0]*n1+[1]*n2+[2]*n3)
+    
+    # make coordinates
+    coord = np.concatenate((np.random.multivariate_normal(mu1,sig1,n1),
+                            np.random.multivariate_normal(mu2,sig2,n2),
+                            np.random.multivariate_normal(mu3,sig3,n3)))
+    
+    # make dataset
+    ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
+    
+    # plot coordinates
+    if plot: ds.plot_coord()
+        
+    return ds
+
+def gen_3sph_evensamp_unevenspacing(plot=True):
+
+    # set name
+    name = "3sph_evensamp_unevenspacing"
+            
+    # set generative parameters  
+    mu1 = np.array([0,2.5])
+    sig1 = np.eye(2)
+    n1 = 30
+    mu2 = np.array([0,-2.5])
+    sig2 = np.eye(2)
+    n2 = 30
+    mu3 = np.array([15,0])    
+    sig3 = np.eye(2)
+    n3 = 30
+    param = {'mu1': mu1, 'sig1': sig1, 'n1': n1,
+             'mu2': mu2, 'sig2': sig2, 'n2': n2,
+             'mu3': mu3, 'sig3': sig3, 'n3': n3}
+    
+    # make labels
+    labels = np.array([0]*n1+[1]*n2+[2]*n3)
+    
+    # make coordinates
+    coord = np.concatenate((np.random.multivariate_normal(mu1,sig1,n1),
+                            np.random.multivariate_normal(mu2,sig2,n2),
+                            np.random.multivariate_normal(mu3,sig3,n3)))
+    
+    # make dataset
+    ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
+    
+    # plot coordinates
+    if plot: ds.plot_coord()
+        
+    return ds
+    
+def gen_circleandcigar(plot=True):
+
+    # set name
+    name = "circleandcigar"
+            
+    # set generative parameters  
+    mu1 = np.array([5,0])
+    sig1 = np.eye(2)
+    n1 = 50
+    mu2 = np.array([-5,0])
+    sig2 = np.array([[1,0],[0,25]])
+    n2 = 50
+    param = {'mu1': mu1, 'sig1': sig1, 'n1': n1,
+             'mu2': mu2, 'sig2': sig2, 'n2': n2}
+    
+    # make labels
+    labels = np.array([0]*n1+[1]*n2)
+    
+    # make coordinates
+    coord = np.concatenate((np.random.multivariate_normal(mu1,sig1,n1),
+                            np.random.multivariate_normal(mu2,sig2,n2)))
+    
+    # make dataset
+    ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
+    
+    # plot coordinates
+    if plot: ds.plot_coord()
+        
+    return ds
+
+def gen_2cigars(plot=True):
+    
+    # set name
+    name = "2cigars"
+     
+    # set generative parameters   
+    mu1 = np.array([0,-4])
+    sig1 = np.array([[25,0],[0,1]])
+    n1 = 50
+    mu2 = np.array([0,4])
+    sig2 = np.array([[25,0],[0,1]])
+    n2 = 50
+    param = {'mu1': mu1, 'sig1': sig1, 'n1': n1,
+             'mu2': mu2, 'sig2': sig2, 'n2': n2}
+    
+    # make labels
+    labels = np.array([0]*n1+[1]*n2)
+    
+    # make coordinates
+    coord = np.concatenate((np.random.multivariate_normal(mu1,sig1,n1),
+                            np.random.multivariate_normal(mu2,sig2,n2)))
+    
+    # make dataset
+    ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
+    
+    # plot coordinates
+    if plot: ds.plot_coord()
+        
+    return ds
+    
+def gen_2over3(plot=True):
+
+    # set name
+    name = "2over3"
+            
+    # set generative parameters  
+    mu1 = np.array([0,0])
+    sig1 = np.eye(2)
+    n1 = 20
+    mu2 = np.array([-4,0])
+    sig2 = np.eye(2)
+    n2 = 20
+    mu3 = np.array([4,0])    
+    sig3 = np.eye(2)
+    n3 = 20
+    mu4 = np.array([-2,12])
+    sig4 = np.eye(2)
+    n4 = 20
+    mu5 = np.array([2,12])
+    sig5 = np.eye(2)
+    n5 = 20
+    param = {'mu1': mu1, 'sig1': sig1, 'n1': n1,
+             'mu2': mu2, 'sig2': sig2, 'n2': n2,
+             'mu3': mu3, 'sig3': sig3, 'n3': n3,
+             'mu4': mu4, 'sig4': sig4, 'n4': n4,
+             'mu5': mu5, 'sig5': sig5, 'n5': n5}
+    
+    # make labels
+    labels = np.array([0]*n1+[1]*n2+[2]*n3+[3]*n4+[4]*n5)
+    
+    # make coordinates
+    coord = np.concatenate((np.random.multivariate_normal(mu1,sig1,n1),
+                            np.random.multivariate_normal(mu2,sig2,n2),
+                            np.random.multivariate_normal(mu3,sig3,n3),
+                            np.random.multivariate_normal(mu4,sig4,n4),
+                            np.random.multivariate_normal(mu5,sig5,n5)))
+    
+    # make dataset
+    ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
+    
+    # plot coordinates
+    if plot: ds.plot_coord()
+        
+    return ds
+    
+def gen_halfconcentric(plot=True):
+    
+    # set name
+    name = "halfconcentric"
+            
+    # set generative parameters
+    nt = 80 # number of thetas
+    nd = 1 # number of samples per theta
+    no = nd*nt # number of samples for outer circle
+    ni = 20 # number of samples for inner circle
+    r = 5 # radius of outer loop
+    so = .25 # gaussian noise variance of outer circle
+    si = .25 # gaussian noise variance of inner circle
+    thetas = -np.linspace(0,math.pi,nt)
+    x = [r*math.cos(theta) for theta in thetas]
+    y = [r*math.sin(theta) for theta in thetas]
+    param = {'nt': nt, 'nd': nd, 'no': no, 'ni': ni, 'r': r, 'so': so, 'si': si}
+         
+    # make labels
+    labels = np.array([0]*ni+[1]*no)
+          
+    # make coordinates
+    coord = np.random.multivariate_normal(np.array([0,0]),si*np.eye(2),ni)
+    for i in range(len(x)):
+        coord = np.concatenate((coord,np.random.multivariate_normal(np.array([x[i],y[i]]),so*np.eye(2),nd)))
+
+    # make dataset
+    ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
+    
+    # plot coordinates
+    if plot: ds.plot_coord()
+        
+    return ds
+    
+def gen_concentric(plot=True):
+    
+    # set name
+    name = "concentric"
+            
+    # set generative parameters
+    nt = 80 # number of thetas
+    nd = 1 # number of samples per theta
+    no = nd*nt # number of samples for outer circle
+    ni = 20 # number of samples for inner circle
+    r = 5 # radius of outer loop
+    so = .25 # gaussian noise variance of outer circle
+    si = .25 # gaussian noise variance of inner circle
+    thetas = -np.linspace(0,2*math.pi,nt)
+    x = [r*math.cos(theta) for theta in thetas]
+    y = [r*math.sin(theta) for theta in thetas]
+    param = {'nt': nt, 'nd': nd, 'no': no, 'ni': ni, 'r': r, 'so': so, 'si': si}
+         
+    # make labels
+    labels = np.array([0]*ni+[1]*no)
+          
+    # make coordinates
+    coord = np.random.multivariate_normal(np.array([0,0]),si*np.eye(2),ni)
+    for i in range(len(x)):
+        coord = np.concatenate((coord,np.random.multivariate_normal(np.array([x[i],y[i]]),so*np.eye(2),nd)))
+
+    # make dataset
+    ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
+    
+    # plot coordinates
+    if plot: ds.plot_coord()
+        
+    return ds
+
+# CODE BELOW NOT YET ADAPTED TO USE NEW IB DATASET CLASS
+# GENERATE ONLY P(X,Y)
+
 def gen_zipf_pxy():
     X = 1024
     Y = X
@@ -97,57 +413,6 @@ def gen_gaussian_pxy():
     c = np.linalg.det(cov)
     ixy_true = .5*math.log2((cx*cy)/c)
     print("I(X;Y) = %.3f (analytical)" % ixy_true) 
-    px = pxy.sum(axis=1)
-    py = pxy.sum(axis=0)
-    py_x = np.multiply(pxy.T,np.tile(1./px,(Y,1)))
-    hy = entropy(py)
-    hy_x = np.dot(px,entropy(py_x))
-    ixy_emp = hy-hy_x
-    print("I(X;Y) = %.3f (empirical)" % ixy_emp)   
-    return pxy
-    
-def gen_gmm_pxy():
-    # param
-    mu1 = np.array([1.2,-.5])
-    mu2 = np.array([-1,1])
-    mu3 = np.array([1,2])
-    mu4 = np.array([-2,-2])
-    cov1 = np.array([[1.2,1.1],[1,1]])
-    cov2 = np.array([[1.05,-.9],[-.95,1.1]])
-    cov3 = np.array([[.5,-.35],[-.3,.4]])
-    cov4 = np.array([[.6,.4],[.7,1]])
-    w1 = .3
-    w2 = .27
-    w3 = .23
-    w4 = .2
-    X = 128
-    Y = 128
-    xlow = -3
-    xhigh = 3
-    ylow = -3
-    yhigh = 3
-    x,y = np.meshgrid(np.linspace(xlow,xhigh,X),np.linspace(ylow,yhigh,Y))
-    pos = np.empty(x.shape + (2,))
-    pos[:,:,0] = x; pos[:,:,1] = y
-    # generate pdf
-    from scipy.stats import multivariate_normal
-    import matplotlib.pyplot as plt
-    rv1 = multivariate_normal(mean=mu1,cov=cov1)
-    pxy1 = rv1.pdf(pos)
-    rv2 = multivariate_normal(mean=mu2,cov=cov2)
-    pxy2 = rv2.pdf(pos)
-    rv3 = multivariate_normal(mean=mu3,cov=cov3)
-    pxy3 = rv3.pdf(pos)
-    rv4 = multivariate_normal(mean=mu4,cov=cov4)
-    pxy4 = rv4.pdf(pos)
-    pxy = w1*pxy1+w2*pxy2+w3*pxy3+w4*pxy4
-    pxy = pxy/np.sum(pxy)
-    # plot to make sure everything looks right
-    plt.figure()
-    plt.contourf(x, y, pxy)
-    plt.ion()
-    plt.show()
-    # calc ixy
     px = pxy.sum(axis=1)
     py = pxy.sum(axis=0)
     py_x = np.multiply(pxy.T,np.tile(1./px,(Y,1)))
@@ -262,109 +527,3 @@ def gen_hierarchical_pxy(component_type):
     print("I(X;Y) = %.3f" % ixy) 
     
     return pxy, groups
-    
-def plot_pxy(exp_name):
-    
-    # load p(x,y)
-    cwd = os.getcwd()
-    datapath = cwd+'/data/geometric/'+exp_name+'_'
-    pxy = np.load(datapath+'pxy.npy') 
-    pxy2, px, py_x, hx, hy, hy_x, ixy, X, Y, zx, zy = process_pxy(pxy,0)
-    
-    # plot p(x,y)
-    plt.figure()
-    plt.contourf(pxy)
-    plt.ion()
-    plt.show()
-    
-    # plot histogram of H(p(y|x)) over x
-    plt.hist(entropy(py_x), bins='auto')
-    plt.title("entropies of conditionals p(y|x)")
-    plt.show()  
-    
-    # print ixy
-    print("I(X;Y) = %.3f" % ixy)
-    
-    return 0
-    
-def coord_to_pxy(coord,s,bins_per_dim=50):
-    # assumes 2D coord
-    
-    print('Smoothing coordinates with scale %.2f into p(x,y)' % s)
-    
-    pad = 2*s # max distance from data points for bins
-    
-    # dimensional preprocessing
-    X = coord.shape[0]
-    Ymax = int(bins_per_dim**2)   
-    Y = Ymax
-    min_x1 = np.min(coord[:,0])
-    min_x2 = np.min(coord[:,1])
-    max_x1 = np.max(coord[:,0])
-    max_x2 = np.max(coord[:,1])
-    
-    # generate bins and construct gaussian-smoothed p(y|x)
-    min_y1 = min_x1-pad
-    max_y1 = max_x1+pad
-    min_y2 = min_x2-pad
-    max_y2 = max_x2+pad
-    y1 = np.linspace(min_y1,max_y1,bins_per_dim)
-    y2 = np.linspace(min_y2,max_y2,bins_per_dim)
-    y1v,y2v = np.meshgrid(y1,y2)
-    Ygrid = np.array([np.reshape(y1v,Y),np.reshape(y2v,Y)]).T    
-    py_x = np.zeros((Y,X))
-    y_count_near = np.zeros(Y) # counts data points within pad of each bin
-    for x in range(X):
-        for y in range(Y):
-            l = np.linalg.norm(coord[x,:]-Ygrid[y,:])
-            py_x[y,x] = (1./math.sqrt(2*math.pi*(s**(2*2))))*math.exp(-(1./(2.*(s**2)))*l)
-            if l<pad:
-                y_count_near[y] += 1
-        
-    # drop ybins that are too far away from data
-    ymask = y_count_near>0
-    py_x = py_x[ymask,:]
-    print("Dropped %i ybins. Y reduced from %i to %i." % (Y-np.sum(ymask),Y,np.sum(ymask)))
-    Y = np.sum(ymask)
-    # normalize p(y|x), since gaussian binned/truncated and bins dropped
-    for x in range(X):
-        py_x[:,x] = py_x[:,x]/np.sum(py_x[:,x])
-    # construct p(x,y)
-    px = (1/X)*np.ones(X)    
-    pxy = np.multiply(np.tile(px,(Y,1)),py_x).T
-    
-    # plot p(x,y)
-    plt.figure()
-    plt.contourf(pxy)
-    plt.ion()
-    plt.show()
-    
-    # calc and display I(x,y)
-    pxy2, px2, py_x2, hx, hy, hy_x, ixy, X2, Y2, zx, zy = process_pxy(pxy,0)
-    print("I(X;Y) = %.3f" % ixy)
-    
-    return pxy
-    
-def gen_3_even_sph_wellsep():
-            
-    # set all parameters    
-    mu1 = np.array([0,0])
-    sig1 = 1
-    mu2 = np.array([8,3])
-    sig2 = 1
-    mu3 = np.array([0,10])
-    sig3 = 1
-    samp_per_comp = 30
-    labels = np.array([0]*samp_per_comp+[1]*samp_per_comp+[2]*samp_per_comp)
-    
-    
-    # generate coordinates of data points
-    coord = np.r_[sig1*np.random.randn(samp_per_comp,2)+mu1,
-                  sig2*np.random.randn(samp_per_comp,2)+mu2,
-                  sig3*np.random.randn(samp_per_comp,2)+mu3]
-    
-    # plot coordinates
-    plt.scatter(coord[:,0],coord[:,1])
-    plt.show()
-        
-    return {'coord': coord, 'labels': labels}
