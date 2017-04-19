@@ -11,9 +11,9 @@ vexp = np.vectorize(math.exp)
 # conditioning, so read _ as |.
 
 # todos:
-#   update documentation for OOP version
-#   fold smoothing into IB so that s is a parameter
+#   automatically run impute_coord when calling IB on geometric data
 #   implement non-spherical smoothing into dataset class
+#   fold smoothing into IB so that s is a parameter
 #   function to plot geometric clustering solutions (i.e. color points in coord plane)
 #   allow refine_beta parameters to be set by model.fit()
 #   draw IB curve during fits
@@ -87,6 +87,10 @@ def kl(P,Q):
     return DKL
 
 class dataset:
+    """A representation / interface for an IB dataset, primarily consisting of
+    the joint distribution p(x,y) and its marginals, conditionals, and stats.
+    Also includes functionality for acceping data point coordinates and applying
+    smoothing to yield an IB-appropriate p(x,y)."""
     
     def __init__(self,pxy=None,coord=None,labels=None,gen_param=None,name=None,s=None):
         if pxy is not None:
@@ -234,10 +238,31 @@ class dataset:
                       gen_param = obj.gen_param, name = obj.name, s = obj.s)
             
 class model:
+    """A representation / interface for an IB model, primarily consisting of
+    the encoder / clustering q(t|x) and its associated distributions.
+    
+    Functions of main interest to users are (in order) __init__, fit,
+    report_metrics, report_param, and possibly clamp. The rest are primarily
+    helper functions that won't be called directly by the user."""
 
     def __init__(self,ds,alpha,beta,Tmax=None,qt_x=None,p0=None,waviness=None,
                  ctol_abs=10**-4,ctol_rel=0.,cthresh=1,ptol=10**-8,zeroLtol=0,
                  geoapprox=False,quiet=False):
+        """ds is a dataset object (see dataset class above). alpha and beta are
+        IB parameters that appear in the generalized cost functional (see
+        Strouse & Schwab 2016). Tmax is the maximum number of clusters allowed,
+        i.e. the maximum cardinality of T. qt_x is the initialization of the 
+        encoder. If not provided, qt_x will be initialized randomly based on
+        p0 and waviness (see init_qt_x below for details). ctol_abs, ctol_rel,
+        and cthresh are convergence tolerances; see check_converged below for
+        details. ptol is the threshold for considering a probability to be zero;
+        clusters with probability mass below ptol are pruned. zeroLtol governs
+        how aggressively converged solutions are replaced with the single-cluster
+        solution; if converged L>zeroLtol, it gets replaced (see
+        check_single_better below for details). geoapprox determines whether a
+        particular approximation to the IB algorithm is used; applicable to
+        geometric datasets where coord is available only. quiet is a flag that
+        suppresses some output."""
         if not(isinstance(ds,dataset)):
             raise ValueError('ds must be a dataset')
         self.ds = ds # dataset
@@ -366,8 +391,8 @@ class model:
                 t = np.random.randint(self.T) # pick cluster to get delta spike
                 self.qt_x[t,:] = np.zeros((1,self.ds.X)) # zero out that cluster
                 self.qt_x = np.multiply(self.qt_x,np.tile(1./np.sum(self.qt_x,axis=0),(self.T,1))) # normalize the rest...
-                self.qt_x = (1-self.p0)*self.qt_x # ...to 1-p0
-                self.qt_x[t,:] = self.p0*np.ones((1,self.ds.X)) # put in delta spike
+                self.qt_x = (1-p0)*self.qt_x # ...to 1-p0
+                self.qt_x[t,:] = p0*np.ones((1,self.ds.X)) # put in delta spike
             else: # uniform random vector instead of wavy
                 self.qt_x = np.zeros((self.T,self.ds.X))
                 # choose clusters for each x to get spikes
@@ -375,8 +400,8 @@ class model:
                 for i in range(self.ds.X):
                     u = np.random.rand(self.T)
                     u[t] = 0
-                    u = (1-self.p0)*u/np.sum(u)
-                    u[t] = self.p0
+                    u = (1-p0)*u/np.sum(u)
+                    u[t] = p0
                     self.qt_x[:,i] = u                
     
     def qt_step(self):
@@ -536,16 +561,17 @@ class model:
         else: self.conv_condition += '_AND_' + cond
                 
     def update_sw(self):
+        """Appends current model / stats to the internal stepwise dataframe."""
         if self.keep_steps:
             # store stepwise data                
             self.metrics_sw = self.metrics_sw.append(self.panda(), ignore_index = True)
             if bool(self.dist_to_keep): self.dist_sw = self.dist_sw.append(self.panda(self.dist_to_keep), ignore_index = True)
 
     def check_converged(self):
-        """Checks if most recent step triggered convergence, and stores step
-        if necessary."""
+        """Checks if most recent step triggered convergence, and stores step /
+        reverts model to last step if necessary."""
+        
         Lold = self.prev['L'][0] 
-        small_changes = False
         
         # check for small changes
         small_abs_changes = abs(Lold-self.L)<self.ctol_abs
@@ -734,7 +760,7 @@ def refine_beta(metrics_conv):
         
     # filter out betas above max_beta_allowed
     if any([beta>max_beta_allowed for beta in new_betas]):
-        if verbose==2: print('Filtered out %i betas larger than max_beta_allowed.' % len([beta for beta in new_betas if beta>max_beta_allowed]))
+        print('Filtered out %i betas larger than max_beta_allowed.' % len([beta for beta in new_betas if beta>max_beta_allowed]))
         new_betas = [beta for beta in new_betas if beta<max_beta_allowed]
         if max_beta_allowed in (list(metrics_conv['beta'].values)+new_betas):
             print('...and not replaced since max_beta_allowed = %i already used.' % max_beta_allowed)
@@ -764,96 +790,41 @@ def make_param_dict(fit_param,*args):
 
 def IB(ds,fit_param,conv_dist_to_keep={'qt_x','qt','qy_t','Dxt'},
        keep_steps=True,sw_dist_to_keep={'qt_x','qt','qy_t','Dxt'}):
-    """Performs many generalized IB fits to a single p(x,y).
-    
-    One fit is performed for each row of input dataframe fit_param. Columns
-    correspond to fit parameters.
+    """Performs many generalized IB fits to a single dataset. One series of
+    fits (across beta) is performed for each row of input dataframe fit_param.
+    Columns correspond to fit parameters.
     
     INPUTS
-    pxy = input distribution p(x,y) [=] X x Y
+    ds is a dataset object; see class definition above.
     fit_param = pandas df, with each row specifying a single round of IB fits,
             where a "round" means a bunch of fits where the only parameter that
             varies from fit to fit is beta; columns include:
-        **** required ****
-        alpha = IB parameter interpolating between IB and DIB [=] pos scalar (required)
-        **** optional (have defaults) ****
-        *** parameters not passed directly to IB_single (defaults set below) ***
-        betas = list of initial beta values to run, where beta is an IB parameter
-            specifying the "coarse-grainedness" of the solution [=] list of pos scalars
-        beta_search = flag indicating whether to perform automatic beta search
-            or use *only* initial beta(s) [=] boolean
-        max_fits = max number of beta fits allowed for each input row [=] pos integer
-        max_time = max time (in seconds) allowed for fitting of each input row [=] pos scalar
-        repeats = repeated fits per beta / row, after which fit with best value
-            of objective function L is retained [=] pos int
-        *** parameters passed to IB_single (defaults set there) ***    
-        Tmax = max cardinality of T / max # of clusters; if None, defaults
-            to using |X|, which is the most conservative setting [=] pos integer
-        p0 = determines initialization of q(t|x) jointly with waviness
-            for zero p0, q(t|x) is initialized fully randomly with no structure;
-                see waviness below for more
-            for pos p0, p0 is prob mass on ~unique cluster for each input x
-                (i.e. q(t_i|x_i)=p0 where t_i is unique for each x_i)
-            for neg p0, p0 is prob mass on shared cluster for all inputs
-                (i.e. q(t*_x_i)=p0 for all x_i)
-            what happens to the remaining 1-p0 prob mass is determined by waviness
-        waviness = if waviness is None, remaining prob mass is a normalized
-            uniform random vector. Otherwise, remaining prob mass is assigned
-            uniformly, with uniform noise of magnitude +- waviness [=] 0<=waviness<=1
-            (for more on p0 and waviness, see init_qt_x)
-        ctol_abs = absolute convergence tolerance; if L is the objective
-            function, then if abs(L_old-L)<ctol_abs, converge [=] non-neg scalar
-        ctol_rel = relative convergence tolerance; if
-            abs(L_old-L)/abs(L_old)<ctol_rel, converge [=] non-neg scalar
-        ptol = probalitiy tolerance; x,y,t values dropped if prob<ptol [=] non-neg scalar        
-        zeroLtol = if converged solution has L>zeroLtol, revert to solution
-            mapping all x to same t (which has L=0) [=] non-neg scalar
-        clamp = if true, for all non-DIB fits, insert a clamped version of the
-            solution into the results after convergence [=] boolean
-    verbose = integer indicating verbosity of updates [=] {0,1,2}
-             0: only tell me about errors;
-             1: tell me when and why things converge;
-             2: tell me about every step of the algorithm
-    compact = integer indicating how much data to save [=] {0,1,2}
-             0: only save metrics;
-             1: also save converged distributions;
-             2: also save stepwise distributions
+        0) alpha = IB parameter interpolating between IB and DIB (required)
+        *** parameters with defaults set below ***
+        1) betas = list of initial beta values to run, where beta is an IB parameter
+            specifying the "coarse-grainedness" of the solution
+        2) beta_search = boolean indicating whether to perform automatic beta search
+            or use *only* initial beta(s)
+        3) max_fits = max number of beta fits allowed for each input row
+        4) max_time = max time (in seconds) allowed for fitting of each input row
+        5) repeats = repeated fits per beta / row, after which fit with best value
+            of objective function L is retained
+        6) clamp = boolean indicating whether to clamp fit after convergence;
+            both unclamped and clamped model are stored and returned
+        *** parameters passed to IB model object (defaults and documentation there) ***    
+        7-13) Tmax, p0, waviness, ctol_abs, ctol_rel, cthresh, ptol, zeroLtol
+
     
     OUTPUTS
-    all outputs are pandas dfs. "sw" means stepwise; each row corresponds to a
+    all 4 outputs are pandas dfs. "sw" means stepwise; each row corresponds to a
     step in the IB algorithm. "conv" means converged; each row corresponds to a
     converged solution of the IB algorithm. "metrics" has columns corresponding
     to things like the objective function value L, informations and entropies,
     and the number of clusters used, while "dist" has columns for the actual
     distributions being optimizing, such as the encoder q(t|x). thus, dist dfs
-    are much larger than metrics dfs. "allreps" means that all repeats for a
-    set of parameters are included, whereas those dfs without this tag retain
-    only the 'best' fit, that is the one with lowest L.
-    *** columns that all dfs contain ***
-    parameters described above: alpha, beta (single value now; not list), Tmax,
-                                p0, ctol_abs, ctol_rel, ptol, zeroLtol, repeats
-    repeat = id of repeat [=] pos integer in range of 0 to repeats
-    step = index of fit step for 'sw', or number of steps to converge for 'conv'
-        [=] pos int
-    time = time to complete this step for 'sw', or time to converge for 'conv'
-        [=] pos scale (in s)
-    *** columns that only 'conv' dfs contain ***
-    conv_condition
-    clamp
-    *** columns that only 'metrics' dfs contain ***
-    L = objective function value [=] scalar
-    T = number of clusters used [=] pos integer
-    ht = H(T) [=] pos scalar
-    ht_x = H(T|X) [=] pos scalar
-    hy_t = H(Y|T) [=] pos scalar
-    ixt = I(X,T) [=] pos scalar
-    iyt = I(Y,T) [=] pos scalar
-    hx = H(X) [=] pos scalar (fixed property of p(x,y); here for comparison)
-    ixy = I(X,Y) [=] pos scalar (fixed property of p(x,y); here for comparison)
-    *** columns that only 'dist' dfs contain ***
-    qt_x = q(t|x) = [=] T x X (note: size T may change during iterations)
-    qt = q(t) [=] T x 1 (note: size T may change during iterations)
-    qy_t = q(y|t) [=] Y x T (note: size T may change during iterations)"""
+    are much larger than metrics dfs.
+    
+    most column values should be self-explanatory, or are explained above."""
     
     # set defaults
     def_betas = [.1,1,2,3,4,5,7,9,10]
@@ -875,7 +846,8 @@ def IB(ds,fit_param,conv_dist_to_keep={'qt_x','qt','qy_t','Dxt'},
     fit_param = fit_param.where((pd.notnull(fit_param)), None) # NaN -> None
     paramID = 0 # all betas have same
     fitID = 0 # all repeats have same
-    fitIDwrep = 0 # repeats get unique       
+    fitIDwrep = 0 # repeats get unique
+    # note that for clamped/unclamped version of a model, all 3 IDs are same     
     for irow in range(len(fit_param.index)):
         
         # tick counter
