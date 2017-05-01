@@ -8,16 +8,17 @@ def gen_easytest(plot=True):
     # set name
     name = "easytest"
             
+    n = 10
     # set generative parameters  
     mu1 = np.array([0,0])
     sig1 = np.eye(2)
-    n1 = 5
+    n1 = n
     mu2 = np.array([math.sqrt(75),5])
     sig2 = np.eye(2)
-    n2 = 5
+    n2 = n
     mu3 = np.array([0,10])
     sig3 = np.eye(2)
-    n3 = 5
+    n3 = n
     param = {'mu1': mu1, 'sig1': sig1, 'n1': n1,
              'mu2': mu2, 'sig2': sig2, 'n2': n2,
              'mu3': mu3, 'sig3': sig3, 'n3': n3}
@@ -34,6 +35,10 @@ def gen_easytest(plot=True):
     ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
     
     # plot coordinates
+    if plot: ds.plot_coord()
+    
+    # normalize
+    ds.normalize_coord()
     if plot: ds.plot_coord()
         
     return ds
@@ -70,6 +75,10 @@ def gen_3sph_evensamp_evenspacing(plot=True):
     
     # plot coordinates
     if plot: ds.plot_coord()
+    
+    # normalize
+    ds.normalize_coord()
+    if plot: ds.plot_coord()
         
     return ds
     
@@ -104,6 +113,10 @@ def gen_3sph_unevensamp_evenspacing(plot=True):
     ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
     
     # plot coordinates
+    if plot: ds.plot_coord()
+    
+    # normalize
+    ds.normalize_coord()
     if plot: ds.plot_coord()
         
     return ds
@@ -140,6 +153,10 @@ def gen_3sph_evensamp_unevenspacing(plot=True):
     
     # plot coordinates
     if plot: ds.plot_coord()
+    
+    # normalize
+    ds.normalize_coord()
+    if plot: ds.plot_coord()
         
     return ds
     
@@ -169,6 +186,10 @@ def gen_circleandcigar(plot=True):
     ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
     
     # plot coordinates
+    if plot: ds.plot_coord()
+    
+    # normalize
+    ds.normalize_coord()
     if plot: ds.plot_coord()
         
     return ds
@@ -200,6 +221,10 @@ def gen_2cigars(plot=True):
     
     # plot coordinates
     if plot: ds.plot_coord()
+    
+    # normalize
+    ds.normalize_coord()
+    if plot: ds.plot_coord()
         
     return ds
     
@@ -208,21 +233,22 @@ def gen_2over3(plot=True):
     # set name
     name = "2over3"
             
-    # set generative parameters  
+    # set generative parameters
+    sig = .75
     mu1 = np.array([0,0])
-    sig1 = np.eye(2)
+    sig1 = (sig**2)*np.eye(2)
     n1 = 20
     mu2 = np.array([-4,0])
-    sig2 = np.eye(2)
+    sig2 = (sig**2)*np.eye(2)
     n2 = 20
     mu3 = np.array([4,0])    
-    sig3 = np.eye(2)
+    sig3 = (sig**2)*np.eye(2)
     n3 = 20
     mu4 = np.array([-2,12])
-    sig4 = np.eye(2)
+    sig4 = (sig**2)*np.eye(2)
     n4 = 20
     mu5 = np.array([2,12])
-    sig5 = np.eye(2)
+    sig5 = (sig**2)*np.eye(2)
     n5 = 20
     param = {'mu1': mu1, 'sig1': sig1, 'n1': n1,
              'mu2': mu2, 'sig2': sig2, 'n2': n2,
@@ -244,6 +270,10 @@ def gen_2over3(plot=True):
     ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
     
     # plot coordinates
+    if plot: ds.plot_coord()
+    
+    # normalize
+    ds.normalize_coord()
     if plot: ds.plot_coord()
         
     return ds
@@ -279,6 +309,10 @@ def gen_halfconcentric(plot=True):
     
     # plot coordinates
     if plot: ds.plot_coord()
+    
+    # normalize
+    ds.normalize_coord()
+    if plot: ds.plot_coord()
         
     return ds
     
@@ -292,7 +326,7 @@ def gen_concentric(plot=True):
     nd = 1 # number of samples per theta
     no = nd*nt # number of samples for outer circle
     ni = 20 # number of samples for inner circle
-    r = 5 # radius of outer loop
+    r = 8 # radius of outer loop
     so = .25 # gaussian noise variance of outer circle
     si = .25 # gaussian noise variance of inner circle
     thetas = -np.linspace(0,2*math.pi,nt)
@@ -312,6 +346,10 @@ def gen_concentric(plot=True):
     ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
     
     # plot coordinates
+    if plot: ds.plot_coord()
+    
+    # normalize
+    ds.normalize_coord()
     if plot: ds.plot_coord()
         
     return ds
