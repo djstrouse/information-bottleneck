@@ -13,11 +13,11 @@ vexp = np.vectorize(math.exp)
 # conditioning, so read _ as |.
 
 # todos:
-#   make sure consolidated data struct are plottable
-#   set parameters ranges and start experiments
-
 #   function to plot geometric clustering solutions (i.e. color points in coord plane)
 #   allow refine_beta parameters to be set by model.fit()
+
+# questions:
+#   why does 2_cigars only work for topo, d=32, narrow range of beta~3.5 ?
 
 def entropy_term(x):
     """Helper function for entropy_single: calculates one term in the sum."""
@@ -449,6 +449,7 @@ class model:
         label_alphabet = np.unique(self.ds.labels)
         T = len(label_alphabet)
         self.Tmax = T
+        self.T = T
         qt_x = np.zeros((T,self.ds.X))
         for x in range(self.ds.X):
             tstar = np.where(label_alphabet==self.ds.labels[x])[0][0]
@@ -977,7 +978,7 @@ def IB(ds,fit_param,paramID=None,conv_dist_to_keep={'qt_x','qt','qy_t','Dxt'},
     def_repeats = 1
     def_geoapprox = False
     def_clamp = True
-    def_try_labels = False
+    def_using_labels = False
     
     # initialize primary dataframes
     metrics_conv = None
@@ -1010,7 +1011,7 @@ def IB(ds,fit_param,paramID=None,conv_dist_to_keep={'qt_x','qt','qy_t','Dxt'},
         this_repeats = int(set_param(this_fit,'repeats',def_repeats))
         this_geoapprox = set_param(this_fit,'geoapprox',def_geoapprox)
         this_clamp = set_param(this_fit,'clamp',def_clamp)
-        this_try_labels = set_param(this_fit,'try_labels',def_try_labels)
+        this_using_labels = set_param(this_fit,'using_labels',def_using_labels)
         
         # optional parameters that have defaults set by IB_single.py
         param_dict = make_param_dict(this_fit,'Tmax','p0','waviness','ctol_abs','ctol_rel','cthresh','ptol','zeroLtol')
@@ -1118,7 +1119,7 @@ def IB(ds,fit_param,paramID=None,conv_dist_to_keep={'qt_x','qt','qy_t','Dxt'},
             print('+'*15+' finished these repeats '+'+'*15)
             
             # if trying true labels...
-            if this_try_labels:
+            if this_using_labels:
                 print('+'*15+' initializing with true labels '+'+'*15)
                 # tick counter
                 fitIDwrep += 1
