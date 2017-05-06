@@ -6,6 +6,7 @@ from scipy.stats import multivariate_normal
 import time
 import math
 import pickle
+import copy
 vlog = np.vectorize(math.log)
 vexp = np.vectorize(math.exp)
 
@@ -18,6 +19,8 @@ vexp = np.vectorize(math.exp)
 
 # questions:
 #   why does 2_cigars only work for topo, d=32, narrow range of beta~3.5 ?
+#   run higher s for uniform smoothing on circlepluscigar
+#   run with Tmax=2 on cigars and concentrics
 
 def entropy_term(x):
     """Helper function for entropy_single: calculates one term in the sum."""
@@ -348,7 +351,7 @@ class model:
 
     def __init__(self,ds,alpha,beta,Tmax=None,qt_x=None,p0=None,waviness=None,
                  ctol_abs=10**-4,ctol_rel=0.,cthresh=1,ptol=10**-8,zeroLtol=0,
-                 geoapprox=False,quiet=False):
+                 geoapprox=False,step=None,quiet=False):
         """ds is a dataset object (see dataset class above). alpha and beta are
         IB parameters that appear in the generalized cost functional (see
         Strouse & Schwab 2016). Tmax is the maximum number of clusters allowed,
@@ -409,7 +412,8 @@ class model:
         self.clamped = False
         self.conv_time = None
         self.conv_condition = None
-        self.step = 0
+        self.merged = False
+        if step is None: self.step = 0
         if p0 is None:
             if alpha==0: p0 = 1. # DIB default: deterministic init that spreads points evenly across clusters
             else: p0 = .75 # non-DIB default: DIB-like init but with only 75% prob mass on "assigned" cluster
@@ -435,7 +439,7 @@ class model:
             self.init_qt_x()
         self.make_step(init=True)
         self.step_time = time.time()-start_time
-        if not(self.quiet): print('init: ' + self.report_metrics())
+        if not(self.quiet): print('step %i: ' % self.step + self.report_metrics())
         
     def use_labels(self):
         """Uses labels to give model 'true' encoder q(t|x)."""
@@ -445,6 +449,7 @@ class model:
         self.clamped = False
         self.conv_time = None
         self.conv_condition = None
+        self.merged = False
         self.step = 0
         label_alphabet = np.unique(self.ds.labels)
         T = len(label_alphabet)
@@ -618,6 +623,7 @@ class model:
         else: self.Dxt = None
         self.calc_metrics()
         self.step += 1
+        self.merged = False
         if not(init):
             self.step_time = time.time()-start_time        
               
@@ -646,7 +652,7 @@ class model:
                 'ctol_abs': self.ctol_abs, 'ctol_rel': self.ctol_rel,
                 'cthresh': self.cthresh, 'zeroLtol': self.zeroLtol,
                 'clamped': self.clamped, 'geoapprox': self.geoapprox,
-                'using_labels': self.using_labels,
+                'using_labels': self.using_labels, 'merged': self.merged,
                 'smoothing_type': self.ds.smoothing_type,
                 'smoothing_center': self.ds.smoothing_center,
                 's': self.ds.s, 'd': self.ds.d,
@@ -687,6 +693,7 @@ class model:
         self.clamped = df['clamped'][0]
         self.geoapprox = df['geoapprox'][0]
         self.using_labels = df['using_labels'][0]
+        self.merged = df['merged'][0]
         self.ds.smoothing_type = df['smoothing_type'][0]
         self.ds.smoothing_center = df['smoothing_center'][0]
         self.ds.s = df['s'][0]
@@ -755,8 +762,11 @@ class model:
             # revert to metrics/distributions from last step
             self.prev.conv_condition = self.conv_condition
             self.depanda(self.prev)
-        #  otherwise, store step
+        # otherwise, store step
         else: self.update_sw()
+        
+        # if converged, check if single cluster solution better
+        if self.cstep>=self.cthresh and self.T>1: self.check_single_better()
                 
     def check_single_better(self):
         """ Replace converged step with single-cluster map if better."""
@@ -776,7 +786,52 @@ class model:
             self.update_sw()
             print('single-cluster solution: ' + self.report_metrics())            
         else: print("single-cluster mapping not better; changes L from %.4f to %.4f (zeroLtol = %.1e)." % (self.L,smodel.L,self.zeroLtol)) 
-                
+        
+    def check_merged_better(self,findbest=True):
+        """Checks if merging any two clusters improves cost function.
+        
+        If findbest = True, review all merges and choose best, if any improve L.
+        If findbest = False, just accept the first merge that improves L.
+        Latter option good if too many clusters to compare all."""
+        start_time = time.time()
+        anybetter = False
+        best = copy.deepcopy(self)
+        # iterate over cluster pairs
+        for t1 in range(self.T-1):
+            for t2 in range(t1+1,self.T):
+                if not(anybetter) or findbest:
+                    # copy model
+                    alt = copy.deepcopy(self)
+                    alt.quiet = True
+                    # t2 -> t1
+                    alt.qt_x[t1,alt.qt_x[t2,:]==1] = 1
+                    alt.qt_x[t2,:] = 0
+                    # update other dist
+                    alt.make_step(init=True)
+                    # check if cost function L reduced relative to best so far
+                    if alt.L<best.L:
+                        best = copy.deepcopy(alt)
+                        mergedt1 = t1
+                        mergedt2 = t2
+                        anybetter = True
+        if anybetter:
+            print('merged clusters %i and %i, reducing L from %.3f to %.3f' % (mergedt1,mergedt2,self.L,best.L))
+            self.__init__(ds=self.ds,alpha=self.alpha,beta=self.beta,
+                          Tmax=self.Tmax,qt_x=best.qt_x,p0=self.p0,waviness=self.waviness,
+                          ctol_abs=self.ctol_abs,ctol_rel=self.ctol_rel,cthresh=self.cthresh,
+                          ptol=self.ptol,zeroLtol=self.zeroLtol,geoapprox=self.geoapprox,
+                          step=self.step,quiet=self.quiet)
+            self.merged = True
+            self.step_time = time.time()-start_time
+            self.cstep = 0
+            self.conv_condition = None
+            self.update_sw()
+            return True
+        else:
+            self.merged = False
+            print('no merges reduce L')
+            return False
+
     def fit(self,keep_steps=False,dist_to_keep={'qt_x','qt','qy_t','Dxt'}):
         """Runs generalized IB algorithm to convergence for current model.
         keep_steps determines whether pre-convergence models / statistics about
@@ -810,18 +865,15 @@ class model:
         self.qt_x0 = self.qt_x
         
         # iterate to convergence
-        while self.cstep<self.cthresh:
-            
+        while self.cstep<self.cthresh:            
             self.prev = self.panda(dist_to_keep={'qt_x','qt','qy_t','Dxt'}) 
             self.make_step()            
             print('step %i: ' % self.step + self.report_metrics())
             self.check_converged()
+            if self.cstep>=self.cthresh and self.T>1: self.check_merged_better()
 
         # report
         print('converged in %i step(s) to: ' % self.step + self.report_metrics())
-        
-        # replace converged step with single-cluster map if better
-        if self.T>1: self.check_single_better()
         
         # clean up
         self.cstep = None
@@ -830,6 +882,23 @@ class model:
 
         # record total time to convergence
         self.conv_time = time.time() - fit_start_time
+        
+    def plot_qt_x(self):
+        """Visualizes clustering induced by q(t|x), if coord available."""
+        
+        if self.ds.coord is None:
+            raise ValueError('coordinates not available; cannot plot')        
+        if not(self.alpha==0 or self.clamped):
+            raise ValueError('qt_x not determinstic; cannot plot')
+         
+        # build cluster assignment vector
+        cluster = np.zeros(self.ds.X)
+        for x in range(self.ds.X): cluster[x] = np.nonzero(self.qt_x[:,x])[0][0]
+            
+        # plot with ggplot
+        plt.figure()
+        plt.scatter(self.ds.coord[:,0],self.ds.coord[:,1],c=cluster)
+        plt.show()
 
 def refine_beta(metrics_conv):
     """Helper function for IB to automate search over parameter beta."""
