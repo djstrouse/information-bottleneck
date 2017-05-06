@@ -870,7 +870,7 @@ class model:
             self.make_step()            
             print('step %i: ' % self.step + self.report_metrics())
             self.check_converged()
-            if self.cstep>=self.cthresh and self.T>1: self.check_merged_better()
+            if self.cstep>=self.cthresh and self.T>1 and self.alpha==0: self.check_merged_better()
 
         # report
         print('converged in %i step(s) to: ' % self.step + self.report_metrics())
