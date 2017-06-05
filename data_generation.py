@@ -42,6 +42,35 @@ def gen_easytest(plot=True):
     if plot: ds.plot_coord()
         
     return ds
+
+def gen_blob(plot=True):
+
+    # set name
+    name = "blob"
+            
+    # set generative parameters  
+    mu1 = np.array([0,0])
+    sig1 = np.eye(2)
+    n1 = 90
+    param = {'mu1': mu1, 'sig1': sig1, 'n1': n1}
+    
+    # make labels
+    labels = np.array([0]*n1)
+    
+    # make coordinates
+    coord = np.random.multivariate_normal(mu1,sig1,n1)
+    
+    # make dataset
+    ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
+    
+    # plot coordinates
+    if plot: ds.plot_coord()
+    
+    # normalize
+    ds.normalize_coord()
+    if plot: ds.plot_coord()
+        
+    return ds
      
 def gen_3sph_evensamp_evenspacing(plot=True):
 
@@ -159,7 +188,59 @@ def gen_3sph_evensamp_unevenspacing(plot=True):
     if plot: ds.plot_coord()
         
     return ds
+
+def make_circle(radius,num_points):
     
+    count = 0
+    points = np.zeros((num_points,2))
+    while count<num_points:
+        x1 = 2*radius*np.random.rand()-radius
+        x2 = 2*radius*np.random.rand()-radius
+        x = np.array([x1,x2])
+        if np.linalg.norm(x)<radius:
+            points[count,:] = x
+            count += 1
+    return points
+
+def gen_mouse(plot=True):
+
+    # set name
+    name = "mouse"
+            
+    # set generative parameters  
+    mu1 = np.array([0,0])
+    rad1 = 4
+    n1 = 180
+    mu2 = np.array([-3.5,5])
+    rad2 = 1.4
+    n2 = 25
+    mu3 = np.array([3.5,5]) 
+    rad3 = 1.4
+    n3 = 25
+    param = {'mu1': mu1, 'rad1': rad1, 'n1': n1,
+             'mu2': mu2, 'rad2': rad2, 'n2': n2,
+             'mu3': mu3, 'rad3': rad3, 'n3': n3}
+    
+    # make labels
+    labels = np.array([0]*n1+[1]*n2+[2]*n3)
+    
+    # make coordinates
+    coord = np.concatenate((make_circle(rad1,n1)+mu1,
+                            make_circle(rad2,n2)+mu2,
+                            make_circle(rad3,n3)+mu3))
+    
+    # make dataset
+    ds = dataset(coord = coord, labels = labels, gen_param = param, name = name)
+    
+    # plot coordinates
+    if plot: ds.plot_coord()
+    
+    # normalize
+    ds.normalize_coord()
+    if plot: ds.plot_coord()
+        
+    return ds
+
 def gen_circleandcigar(plot=True):
 
     # set name

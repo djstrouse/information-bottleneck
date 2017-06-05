@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-from scipy.stats import multivariate_normal
+from scipy.stats import multivariate_normal as mvn
 import time
 import math
 import pickle
@@ -14,13 +14,11 @@ vexp = np.vectorize(math.exp)
 # conditioning, so read _ as |.
 
 # todos:
-#   function to plot geometric clustering solutions (i.e. color points in coord plane)
 #   allow refine_beta parameters to be set by model.fit()
+#   allow global setting of data types, including sparse arrays
 
 # questions:
-#   why does 2_cigars only work for topo, d=32, narrow range of beta~3.5 ?
 #   run higher s for uniform smoothing on circlepluscigar
-#   run with Tmax=2 on cigars and concentrics
 
 def entropy_term(x):
     """Helper function for entropy_single: calculates one term in the sum."""
@@ -97,7 +95,9 @@ class dataset:
     smoothing to yield an IB-appropriate p(x,y)."""
     
     def __init__(self,pxy=None,coord=None,labels=None,gen_param=None,name=None,
-                 smoothing_type=None,smoothing_center=None,s=None,d=None):
+                 smoothing_type=None,smoothing_center=None,s=None,d=None,dt=None):
+        if dt is None: self.dt = np.float32
+        else: self.dt = dt
         if pxy is not None:
             if not(isinstance(pxy,np.ndarray)):
                 raise ValueError('pxy must be a numpy array')
@@ -105,9 +105,11 @@ class dataset:
                 raise ValueError('entries of pxy must be between 0 and 1')
             if abs(np.sum(pxy)-1)>10**-8:
                 raise ValueError('pxy must be normalized')
+            pxy = pxy.astype(self.dt)
         self.pxy = pxy # the distribution that (D)IB acts upon
-        if coord is not None and not(isinstance(coord,np.ndarray)):
-            raise ValueError('coord must be a numpy array')
+        if coord is not None:
+            if not(isinstance(coord,np.ndarray)): raise ValueError('coord must be a numpy array')
+            else: coord = coord.astype(self.dt)
         self.coord = coord # locations of data points if geometric, assumed 2D
         if labels is not None and len(labels)!=coord.shape[0]:
                 raise ValueError('number of labels must match number of rows in coord')
@@ -143,28 +145,33 @@ class dataset:
     def __str__(self):
         return(self.name)
     
-    def process_pxy(self):
+    def process_pxy(self,drop_zeros=True):
         """Drops unused x and y, and calculates info-theoretic stats of pxy."""
         Xorig, Yorig = self.pxy.shape
         px = self.pxy.sum(axis=1)
         py = self.pxy.sum(axis=0)
-        nzx = px>0 # find nonzero-prob entries
-        nzy = py>0
-        zx = np.where(px<=0)[0]
-        zy = np.where(py<=0)[0]
-        self.px = px[nzx] # drop zero-prob entries
-        self.py = py[nzy]
-        self.X = len(px)
-        self.Y = len(py)
+        if drop_zeros:
+            nzx = px>0 # find nonzero-prob entries
+            nzy = py>0
+            zx = np.where(px<=0)[0]
+            zy = np.where(py<=0)[0]
+            self.px = px[nzx] # drop zero-prob entries
+            self.py = py[nzy]
+            self.Ygrid = self.Ygrid[nzy]
+            pxy_orig = self.pxy
+            tmp = pxy_orig[nzx,:]
+            self.pxy = tmp[:,nzy] # pxy_orig with zero-prob x,y removed
+        else:
+            self.px = px
+            self.py = py
+        self.X = len(self.px)
+        self.Y = len(self.py)
         if (Xorig-self.X)>0:
             print('%i of %i Xs dropped due to zero prob; size now %i. Dropped IDs:' % (Xorig-self.X,Xorig,self.X))
             print(zx)
         if (Yorig-self.Y)>0:
             print('%i of %i Ys dropped due to zero prob; size now %i. Dropped IDs:' % (Yorig-self.Y,Yorig,self.Y))
             print(zy)
-        pxy_orig = self.pxy
-        tmp = pxy_orig[nzx,:]
-        self.pxy = tmp[:,nzy] # pxy_orig with zero-prob x,y removed
         self.py_x = np.multiply(self.pxy.T,np.tile(1./self.px,(self.Y,1)))
         self.hx = entropy(self.px)
         self.hy = entropy(self.py)
@@ -188,25 +195,12 @@ class dataset:
         
         # scale
         self.coord = desired_r*self.coord/r
-
-    def coord_to_pxy(self,total_bins=2500):
-        """Uses smoothing paramters to transform coord into pxy."""
-        # assumes 2D coord, total_bins is approximate
         
-        if self.smoothing_type is None: raise ValueError('smoothing_type not yet set')
-        if self.s is None: raise ValueError('smoothing scale, s, not yet set')      
-        if self.smoothing_type=='uniform':
-            print('Smoothing coordinates: smoothing_type = uniform, scale s = %.2f' % self.s)
-        else:
-            if self.smoothing_center is None: raise ValueError('smoothing_center not yet set')
-            if self.d is None: raise ValueError('neighborhood size, d, not yet set')
-            if self.smoothing_type=='topological': 
-                print('Smoothing coordinates: smoothing_type = topological, smoothing_center = %s, scale s = %.2f, neighborhood size d = %i' % (self.smoothing_center,self.s,self.d))
-            elif self.smoothing_type=='metric': 
-                print('Smoothing coordinates: smoothing_type = metric, smoothing_center = %s, scale s = %.2f, neighborhood size d = %.1f' % (self.smoothing_center,self.s,self.d))
-            else: raise ValueError('invalid smoothing_type')
+    def make_bins(self,total_bins=2500,pad=None):
+        """Compute appropriate spatial bins."""
         
-        pad = 2*self.s # bins further than this from all data points are dropped
+        if pad is None: pad = 2*self.s # bins further than this from all data points are dropped
+        self.pad = pad
         
         # dimensional preprocessing
         min_x1 = np.min(self.coord[:,0])
@@ -224,15 +218,38 @@ class dataset:
         max_y1 = max_x1+pad
         min_y2 = min_x2-pad
         max_y2 = max_x2+pad
-        y1 = np.linspace(min_y1,max_y1,bins1)
-        y2 = np.linspace(min_y2,max_y2,bins2)
-        y1v,y2v = np.meshgrid(y1,y2)
+        y1 = np.linspace(min_y1,max_y1,bins1,dtype=self.dt)
+        y2 = np.linspace(min_y2,max_y2,bins2,dtype=self.dt)
+        y1v,y2v = np.meshgrid(y2,y1)
         Ygrid = np.array([np.reshape(y1v,Y),np.reshape(y2v,Y)]).T
-        del y1, y2
+        
+        return Y,bins1,bins2,y1v,y2v,Ygrid
+        
+
+    def coord_to_pxy(self,total_bins=2500,pad=None,drop_distant=True,
+                     drop_zeros=True,make_smoothed_coord_density=True):
+        """Uses smoothing paramters to transform coord into pxy."""
+        # assumes 2D coord, total_bins is approximate
+        
+        if self.smoothing_type is None: raise ValueError('smoothing_type not yet set')
+        if self.s is None: raise ValueError('smoothing scale, s, not yet set')      
+        if self.smoothing_type=='uniform':
+            print('smoothing coordinates: smoothing_type = uniform, scale s = %.2f' % self.s)
+        else:
+            if self.smoothing_center is None: raise ValueError('smoothing_center not yet set')
+            if self.d is None: raise ValueError('neighborhood size, d, not yet set')
+            if self.smoothing_type=='topological': 
+                print('Smoothing coordinates: smoothing_type = topological, smoothing_center = %s, scale s = %.2f, neighborhood size d = %i' % (self.smoothing_center,self.s,self.d))
+            elif self.smoothing_type=='metric': 
+                print('Smoothing coordinates: smoothing_type = metric, smoothing_center = %s, scale s = %.2f, neighborhood size d = %.1f' % (self.smoothing_center,self.s,self.d))
+            else: raise ValueError('invalid smoothing_type')
+        
+        # compute appropriate spatial bins
+        Y,bins1,bins2,y1v,y2v,Ygrid = self.make_bins(total_bins=total_bins,pad=pad)
         
         # construct gaussian-smoothed p(y|x), based on smoothing parameters
-        py_x = np.zeros((Y,self.X))
-        smoothed_coord_density = np.zeros(y1v.shape)
+        py_x = np.zeros((Y,self.X),dtype=self.dt)
+        smoothed_coord_density = np.zeros(y1v.shape,dtype=self.dt)
         ycountv = np.zeros(Y) # counts data points within pad of each bin
         ycount = np.zeros(y1v.shape)
         for x in range(self.X):
@@ -270,60 +287,83 @@ class dataset:
                 # in other two cases, mu remains as above
                 
             # use covariance to smooth data
-            rv = multivariate_normal(mu,S)
+            rv = mvn(mu,S)
             y = 0
-            for y1 in range(y1v.shape[0]):
-                for y2 in range(y1v.shape[1]):
-                    py_x[y,x] = rv.pdf(Ygrid[y,:])
-                    smoothed_coord_density[y1,y2] += rv.pdf([y1v[y1,y2],y2v[y1,y2]])
-                    if np.linalg.norm(self.coord[x,:]-Ygrid[y,:])<pad:
-                        ycountv[y] += 1
-                        ycount[y1,y2] += 1
-                    y += 1
+            py_x[:,x] = rv.pdf(Ygrid).astype(self.dt)
+            if make_smoothed_coord_density:
+                for y1 in range(y1v.shape[0]):
+                    for y2 in range(y1v.shape[1]):
+                        #py_x[y,x] = rv.pdf(Ygrid[y,:]).astype(self.dt)
+                        smoothed_coord_density[y1,y2] += rv.pdf([y1v[y1,y2],y2v[y1,y2]]).astype(self.dt)
+                        if drop_distant and np.linalg.norm(self.coord[x,:]-Ygrid[y,:])<self.pad:
+                            ycountv[y] += 1
+                            ycount[y1,y2] += 1
+                        y += 1
             
-        # drop ybins that are too far away from data
-        ymask = ycountv>0                
-        py_x = py_x[ymask,:]
-        print("Dropped %i ybins. Y reduced from %i to %i." % (Y-np.sum(ymask),Y,np.sum(ymask)))
-        self.Y = np.sum(ymask)
-        self.Ygrid = Ygrid[ymask,:]
+        if drop_distant:
+            # drop ybins that are too far away from data
+            ymask = ycountv>0                
+            py_x = py_x[ymask,:]
+            print("Dropped %i ybins. Y reduced from %i to %i." % (Y-np.sum(ymask),Y,np.sum(ymask)))
+            Y = np.sum(ymask)
+            Ygrid = Ygrid[ymask,:]
+            self.bins_dropped = ycount==0
+        else: self.bins_dropped = None
+        self.Y = Y
+        self.Ygrid = Ygrid
         
         # normalize p(y|x), since gaussian binned/truncated and bins dropped
         for x in range(self.X): py_x[:,x] = py_x[:,x]/np.sum(py_x[:,x])
         self.py_x = py_x
         
         # package stuff for plotting smoothed density in coord space
-        self.bins_dropped = ycount==0
-        self.smoothed_coord_density = smoothed_coord_density/np.sum(smoothed_coord_density[:])
+        if make_smoothed_coord_density: self.smoothed_coord_density = smoothed_coord_density/np.sum(smoothed_coord_density[:])
         self.y1v = y1v
         self.y2v = y2v
         
         # construct p(x) and p(x,y)
-        self.px = (1/self.X)*np.ones(self.X)    
+        self.px = (1/self.X)*np.ones(self.X,dtype=self.dt)    
         self.pxy = np.multiply(np.tile(self.px,(self.Y,1)),self.py_x).T
         
         # calc and display I(x,y)
-        self.process_pxy()
+        self.process_pxy(drop_zeros=drop_zeros)
         print("I(X;Y) = %.3f" % self.ixy)
         
-    def plot_coord(self):
+    def plot_coord(self,save=False,path=None):
         if self.coord is not None:
+            fig = plt.figure()
             plt.scatter(self.coord[:,0],self.coord[:,1])
             plt.axis('scaled')
             plt.show()
+            if save:
+                if path is None: raise ValueError('must specify path to save figure')
+                else: fig.savefig(path+self.name+'_coord.pdf',bbox_inches='tight')
         else:
             print("coord not yet defined")
             
-    def plot_smoothed_coord(self):
+    def plot_smoothed_coord(self,save=False,path=None):
+        fig = plt.figure()
+        plt.title('s = %i' % self.s,fontsize=18,fontweight='bold')
         plt.contour(self.y1v,self.y2v,self.smoothed_coord_density)
         plt.scatter(self.coord[:,0],self.coord[:,1])
-        plt.axis('scaled')
+        #plt.axis('scaled')
+        plt.axis([-22,22,-15,15])
         plt.show()
+        if save:
+            if path is None: raise ValueError('must specify path to save figure')
+            else: fig.savefig(path+self.name+'_smoothed_coord_s%i'%self.s+'.pdf',bbox_inches='tight')
         
-    def plot_pxy(self):
+    def plot_pxy(self,save=False,path=None):
+        fig = plt.figure()
         if self.pxy is not None:
+            if self.s==2:
+                plt.xlabel('Y',fontsize=14,fontweight='bold')
+                plt.ylabel('X',fontsize=14,fontweight='bold')
             plt.contourf(self.pxy)
             plt.show()
+            if save:
+                if path is None: raise ValueError('must specify path to save figure')
+                else: fig.savefig(path+self.name+'_pxy_s%i'%self.s+'.pdf',bbox_inches='tight')
         else:
             print("pxy not yet defined")
             
@@ -351,7 +391,7 @@ class model:
 
     def __init__(self,ds,alpha,beta,Tmax=None,qt_x=None,p0=None,waviness=None,
                  ctol_abs=10**-4,ctol_rel=0.,cthresh=1,ptol=10**-8,zeroLtol=0,
-                 geoapprox=False,step=None,quiet=False):
+                 geoapprox=False,step=None,dt=None,quiet=False):
         """ds is a dataset object (see dataset class above). alpha and beta are
         IB parameters that appear in the generalized cost functional (see
         Strouse & Schwab 2016). Tmax is the maximum number of clusters allowed,
@@ -370,17 +410,15 @@ class model:
         if not(isinstance(ds,dataset)):
             raise ValueError('ds must be a dataset')
         self.ds = ds # dataset
-        if alpha<0 or not(isinstance(alpha,(int,float,np.int64))):
-            raise ValueError('alpha must be a non-negative scalar')
-        else: alpha = float(alpha)
+        if dt is None: self.dt = np.float32
+        else: self.dt = dt
+        if alpha<0: raise ValueError('alpha must be a non-negative scalar')
         self.alpha = alpha
-        if not(beta>0) or not(isinstance(beta,(int,float,np.int64))):
-            raise ValueError('beta must be a positive scalar')
-        else: beta = float(beta)
+        if not(beta>0): raise ValueError('beta must be a positive scalar')
         self.beta = beta
         if Tmax is None:
             Tmax = ds.X
-            print('Tmax set to %i based on X' % Tmax)
+            if not(quiet): print('Tmax set to %i based on X' % Tmax)
         elif Tmax<1 or Tmax!=int(Tmax):
             raise ValueError('Tmax must be a positive integer')
         elif Tmax>ds.X:            
@@ -431,9 +469,11 @@ class model:
             if isinstance(qt_x,np.ndarray):
                 if np.any(qt_x<0) or np.any(qt_x>1):
                     raise ValueError('entries of qt_x must be between 0 and 1')
-                if any(abs(np.sum(qt_x,axis=0)-1)>ptol):
+                if qt_x.shape[0]==1: # if single cluster
+                    if np.any(qt_x!=1): raise ValueError('columns of qt_x must be normalized')
+                elif np.any(abs(np.sum(qt_x,axis=0)-1)>ptol): # if multi-cluster
                     raise ValueError('columns of qt_x must be normalized')
-            self.qt_x = qt_x
+            self.qt_x = qt_x.astype(self.dt)
             self.T = qt_x.shape[0]
         else: # initialize randomly if not
             self.init_qt_x()
@@ -455,11 +495,11 @@ class model:
         T = len(label_alphabet)
         self.Tmax = T
         self.T = T
-        qt_x = np.zeros((T,self.ds.X))
+        qt_x = np.zeros((T,self.ds.X),dtype=self.dt)
         for x in range(self.ds.X):
             tstar = np.where(label_alphabet==self.ds.labels[x])[0][0]
             qt_x[tstar,x] = 1
-        self.qt_x = qt_x
+        self.qt_x = qt_x.astype(self.dt)
         self.make_step(init=True)
         self.step_time = time.time()-start_time
         if not(self.quiet): print('true init: ' + self.report_metrics())
@@ -529,33 +569,49 @@ class model:
                     u[t] = 0
                     u = (1-p0)*u/np.sum(u)
                     u[t] = p0
-                    self.qt_x[:,i] = u                
+                    self.qt_x[:,i] = u
+        if self.qt_x.dtype != self.dt: self.qt_x = self.qt_x.astype(self.dt)
     
     def qt_step(self):
         """Peforms q(t) update step for generalized Information Bottleneck."""
-        self.qt = np.dot(self.qt_x,self.ds.px)
+        self.qt = np.dot(self.qt_x,self.ds.px).astype(self.dt)
         dropped = self.qt<=self.ptol # clusters to drop due to near-zero prob
         if any(dropped):
             self.qt = self.qt[~dropped] # drop ununsed clusters
             self.qt_x = self.qt_x[~dropped,:]
             self.T = len(self.qt) # update number of clusters
             self.qt_x = np.multiply(self.qt_x,np.tile(1./np.sum(self.qt_x,axis=0),(self.T,1))) # renormalize
-            self.qt = np.dot(self.qt_x,self.ds.px)
+            self.qt = np.dot(self.qt_x,self.ds.px).astype(self.dt)
             if not(self.quiet): print('%i cluster(s) dropped. Down to %i cluster(s).' % (np.sum(dropped),self.T)) 
         
     def qy_t_step(self):
         """Peforms q(y|t) update step for generalized Information Bottleneck."""        
-        self.qy_t = np.dot(self.ds.py_x,np.multiply(self.qt_x,np.outer(1./self.qt,self.ds.px)).T)    
-    
+        self.qy_t = np.dot(self.ds.py_x,np.multiply(self.qt_x,np.outer(1./self.qt,self.ds.px)).T)
+        if self.qy_t.dtype != self.dt: self.qy_t = self.qy_x.astype(self.dt)
+        
+    def query_coord(self,x,ptol=0):
+        """Returns cluster assignment for new data point not in training set."""
+        # currently assumes uniform smoothing; needs extended to nearest-neighbor
+        if self.alpha!=0: raise ValueError('only implemented for DIB (alpha=0)')
+        if self.T==1: return 0
+        else:
+            # which y correspond to which spatial locations? Ygrid tells us!
+            py_x = mvn.pdf(self.ds.Ygrid,mean=x,cov=(self.ds.s**2)*np.eye(2))
+            ymask = py_x>ptol
+            perc_dropped = 100*(1-np.mean(ymask))
+            l = vlog(self.qt)-self.beta*kl(py_x[ymask],self.qy_t[ymask,:])
+            return np.argmax(l),perc_dropped
+
     def qt_x_step(self):
         """Peforms q(t|x) update step for generalized Information Bottleneck."""
-        if self.T==1: self.qt_x = np.ones((1,self.X))
+        if self.T==1: self.qt_x = np.ones((1,self.X),dtype=self.dt)
         else:
-            self.qt_x = np.zeros((self.T,self.ds.X))
+            self.qt_x = np.zeros((self.T,self.ds.X),dtype=self.dt)
             for x in range(self.ds.X):
                 l = vlog(self.qt)-self.beta*kl(self.ds.py_x[:,x],self.qy_t) # [=] T x 1 # scales like X*Y*T
                 if self.alpha==0: self.qt_x[np.argmax(l),x] = 1
                 else: self.qt_x[:,x] = vexp(l/self.alpha)/np.sum(vexp(l/self.alpha)) # note: l/alpha<-745 is where underflow creeps in
+        if self.qt_x.dtype != self.dt: self.qt_x = self.qt_x.astype(self.dt)
  
     def build_dist_mat(self):
         """Replaces the qy_t_step whens using geoapprox."""
@@ -569,13 +625,14 @@ class model:
     def qt_x_step_geoapprox(self):
         """Peforms q(t|x) update step for approximate generalized Information
         Bottleneck, an algorithm for geometric clustering."""
-        if self.T==1: self.qt_x = np.ones((1,self.ds.X))
+        if self.T==1: self.qt_x = np.ones((1,self.ds.X),dtype=self.dt)
         else:
-            self.qt_x = np.zeros((self.T,self.ds.X))
+            self.qt_x = np.zeros((self.T,self.ds.X),dtype=self.dt)
             for x in range(self.ds.X):            
                 l = vlog(self.qt)-(self.beta/(2*self.ds.s**2))*self.Dxt[x,:] # only substantive difference from qt_x_step         
                 if self.alpha==0: self.qt_x[np.argmax(l),x] = 1
                 else: self.qt_x[:,x] = vexp(l/self.alpha)/np.sum(vexp(l/self.alpha)) # note: l/alpha<-745 is where underflow creeps in
+        if self.qt_x.dtype != self.dt: self.qt_x = self.qt_x.astype(self.dt)
 
     def calc_metrics(self):
         """Calculates IB performance metrics.."""
@@ -770,7 +827,7 @@ class model:
                 
     def check_single_better(self):
         """ Replace converged step with single-cluster map if better."""
-        sqt_x = np.zeros((self.T,self.ds.X))
+        sqt_x = np.zeros((self.T,self.ds.X),dtype=self.dt)
         sqt_x[0,:] = 1.
         smodel = model(ds=self.ds,alpha=self.alpha,beta=self.beta,Tmax=self.Tmax,
                        qt_x=sqt_x,p0=self.p0,waviness=self.waviness,
@@ -908,17 +965,17 @@ def refine_beta(metrics_conv):
     del_R = .05 # if fractional change in I(Y;T) exceeds this between adjacent betas, insert more betas
     del_C = .05 # if fractional change in H(T) or I(X;T) exceeds this between adjacent betas, insert more betas
     del_T = 0 # if difference in number of clusters used exceeds this between adjacent betas, insert more betas
-    min_abs_res = 1e-3 # if beta diff smaller than this absolute threshold, don't insert; consider as phase transition
-    min_rel_res = 1e-3 # if beta diff smaller than this fractional threshold, don't insert
+    min_abs_res = 1e-2 # if beta diff smaller than this absolute threshold, don't insert; consider as phase transition
+    min_rel_res = 1e-2 # if beta diff smaller than this fractional threshold, don't insert
     # parameters governing insertion of betas when I(X;T) doesn't reach zero
     eps0 = 1e-2 # tolerance for considering I(X;T) to be zero
     l0 = 1 # number of betas to insert at low beta end
     f0 = .5 # new betas will be minbeta*f0.^1:l0
     # parameters governing insertion of betas when I(T;Y) doesn't reach I(X;Y)
-    eps1 = .98 # tolerance for considering I(T;Y) to be I(X;Y)
+    eps1 = .95 # tolerance for considering I(T;Y) to be I(X;Y)
     l1 = 1 # number of betas to insert at high beta end
     f1 = 2 # new betas will be maxbeta*f0.^1:l0
-    max_beta_allowed = 10 # any proposed betas above this will be filtered out and replaced it max_beta_allowed
+    max_beta_allowed = 80 # any proposed betas above this will be filtered out and replaced it max_beta_allowed
 
     # sort fits by beta
     metrics_conv = metrics_conv.sort_values(by='beta')
