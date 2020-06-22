@@ -94,8 +94,17 @@ class dataset:
     Also includes functionality for acceping data point coordinates and applying
     smoothing to yield an IB-appropriate p(x,y)."""
     
-    def __init__(self,pxy=None,coord=None,labels=None,gen_param=None,name=None,
-                 smoothing_type=None,smoothing_center=None,s=None,d=None,dt=None):
+    def __init__(self,
+                 pxy=None,
+                 coord=None, # 2d coordinates for x
+                 labels=None, # labels y
+                 gen_param=None, # generative parameters
+                 name=None,
+                 smoothing_type='uniform',
+                 smoothing_center='data_point',
+                 s=None, # smoothing scale
+                 d=None, # neighborhood size
+                 dt=None): # data type
         if dt is None: self.dt = np.float32
         else: self.dt = dt
         if pxy is not None:
@@ -104,7 +113,7 @@ class dataset:
             if np.any(pxy<0) or np.any(pxy>1):
                 raise ValueError('entries of pxy must be between 0 and 1')
             if abs(np.sum(pxy)-1)>10**-8:
-                raise ValueError('pxy must be normalized')
+                raise ValueError('pxy must be normalized; sum = %f' % np.sum(pxy))
             pxy = pxy.astype(self.dt)
         self.pxy = pxy # the distribution that (D)IB acts upon
         if coord is not None:
@@ -1144,10 +1153,14 @@ def IB(ds,fit_param,paramID=None,conv_dist_to_keep={'qt_x','qt','qy_t','Dxt'},
         
         # smoothing parameters that have defaults set by dataset.__init__
         smoothing_param_dict = make_param_dict(this_fit,'smoothing_type','smoothing_center','s','d')
+        if 's' not in smoothing_param_dict and hasattr(ds, 's') and ds.s:
+            # if s not in fit_param, use setting from input dataset if set
+            smoothing_param_dict['s'] = ds.s
         
         # apply smoothing parameters to input dataset ds
-        this_ds = dataset(pxy=ds.pxy, coord=ds.coord, labels=ds.labels,
-                          gen_param=ds.gen_param, name=ds.name, **smoothing_param_dict)
+        this_ds = dataset(coord=ds.coord, labels=ds.labels,
+                          gen_param=ds.gen_param, name=ds.name, 
+                          **smoothing_param_dict)
         
         # make pre-fitting initializations
         betas = this_betas # stack of betas
