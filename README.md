@@ -1,4 +1,4 @@
-This project implements the generalized information bottleneck [(Strouse, Schwab 2016)](https://arxiv.org/abs/1604.00268), which includes the information bottleneck (IB) [(Tishby, Pereira, Bialek 1999)](http://www.cs.huji.ac.il/labs/learning/Papers/allerton.pdf) and the deterministic information bottleneck (DIB) [(Strouse, Schwab 2016)](https://arxiv.org/abs/1604.00268) as special cases.
+This project implements the generalized information bottleneck [(Strouse & Schwab 2016)](https://arxiv.org/abs/1604.00268), which includes the information bottleneck (IB) [(Tishby, Pereira, Bialek 1999)](http://www.cs.huji.ac.il/labs/learning/Papers/allerton.pdf) and the deterministic information bottleneck (DIB) [(Strouse & Schwab 2016)](https://arxiv.org/abs/1604.00268) as special cases. It includes functionality for doing geometric clustering with DIB per [(Strouse & Schwab 2019)](https://arxiv.org/abs/1712.09657).
 
 The generalized IB operates on an input distribution p(X,Y) and clusters/compresses X into T such that T has/retains maximal information about Y. Its output is a cluster mapping / compressive encoder q(t|x). The cost function the generalized IB minimizes is:
 
